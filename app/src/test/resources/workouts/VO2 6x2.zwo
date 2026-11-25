@@ -1,0 +1,13 @@
+<workout_file>
+  <author>Gregario test workout</author>
+  <name>VO2 6x2</name>
+  <description>6 x 2 min at 125% FTP, 3-min recoveries.</description>
+  <sportType>bike</sportType>
+  <workout>
+    <Ramp Duration="600" PowerLow="0.45" PowerHigh="0.65"/>
+    <SteadyState Duration="300" Power="0.70"/>
+    <SteadyState Duration="180" Power="0.40"/>
+    <IntervalsT Repeat="6" OnDuration="120" OffDuration="180" OnPower="1.25" OffPower="0.40"/>
+    <Ramp Duration="720" PowerLow="0.45" PowerHigh="0.35"/>
+  </workout>
+</workout_file>

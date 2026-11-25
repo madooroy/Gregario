@@ -1,0 +1,15 @@
+<workout_file>
+  <author>Gregario test workout</author>
+  <name>VO2 27x30</name>
+  <description>3 sets of 9 x 30 s at 110% FTP, 30-s floats at 50%.</description>
+  <sportType>bike</sportType>
+  <workout>
+    <Ramp Duration="600" PowerLow="0.45" PowerHigh="0.70"/>
+    <IntervalsT Repeat="9" OnDuration="30" OffDuration="30" OnPower="1.10" OffPower="0.50"/>
+    <SteadyState Duration="240" Power="0.40"/>
+    <IntervalsT Repeat="9" OnDuration="30" OffDuration="30" OnPower="1.10" OffPower="0.50"/>
+    <SteadyState Duration="240" Power="0.40"/>
+    <IntervalsT Repeat="9" OnDuration="30" OffDuration="30" OnPower="1.10" OffPower="0.50"/>
+    <Ramp Duration="300" PowerLow="0.50" PowerHigh="0.40"/>
+  </workout>
+</workout_file>

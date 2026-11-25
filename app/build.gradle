@@ -1,0 +1,77 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// Release signing: keystore.properties (not in git) next to settings.gradle, with storeFile, storePassword, keyAlias,
+// keyPassword. A release build without it fails rather than quietly using a debug key (updates must keep one key).
+def signing = new Properties()
+def signingFile = rootProject.file("keystore.properties")
+if (signingFile.exists()) signingFile.withInputStream { signing.load(it) }
+
+android {
+    namespace 'com.madooroy.gregario'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.madooroy.gregario"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+        vectorDrawables.useSupportLibrary true
+    }
+
+    signingConfigs {
+        if (signingFile.exists()) {
+            gregarioRelease {
+                storeFile file(signing['storeFile'])
+                storePassword signing['storePassword']
+                keyAlias signing['keyAlias']
+                keyPassword signing['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true   // R8 shrinking; obfuscation off (proguard-rules.pro)
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (signingFile.exists()) signingConfig signingConfigs.gregarioRelease
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+    composeOptions { kotlinCompilerExtensionVersion '1.5.15' }
+    packagingOptions { resources { excludes += '/META-INF/{AL2.0,LGPL2.1}' } }
+}
+
+// No silent debug-signed releases.
+tasks.matching { it.name == 'assembleRelease' || it.name == 'bundleRelease' }.configureEach {
+    doFirst { if (!signingFile.exists()) throw new GradleException("keystore.properties is missing: release builds need Gregario's signing key") }
+}
+
+dependencies {
+    def compose = '1.6.8'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.activity:activity-compose:1.9.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+    implementation 'androidx.savedstate:savedstate-ktx:1.2.1'
+    implementation "androidx.compose.ui:ui:$compose"
+    implementation "androidx.compose.material:material:$compose"
+    implementation "androidx.compose.ui:ui-tooling-preview:$compose"
+    debugImplementation "androidx.compose.ui:ui-tooling:$compose"
+    implementation 'com.jakewharton.timber:timber:5.0.1'
+    implementation 'com.google.zxing:core:3.5.3'   // QR code for "Send to the bike"
+
+    testImplementation 'junit:junit:4.13.2'
+}

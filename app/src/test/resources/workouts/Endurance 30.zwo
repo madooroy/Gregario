@@ -1,0 +1,11 @@
+<workout_file>
+  <author>Gregario test workout</author>
+  <name>Endurance 30</name>
+  <description>20 min at 72% FTP between ramps.</description>
+  <sportType>bike</sportType>
+  <workout>
+    <Ramp Duration="300" PowerLow="0.45" PowerHigh="0.60"/>
+    <SteadyState Duration="1200" Power="0.72"/>
+    <Ramp Duration="300" PowerLow="0.60" PowerHigh="0.45"/>
+  </workout>
+</workout_file>

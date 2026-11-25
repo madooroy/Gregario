@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gregario notification icon: the G and the steps as a white silhouette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <group android:translateX="-13.76" android:translateY="-6.88" android:scaleX="0.1600" android:scaleY="0.1600">
+        <path android:strokeColor="#FFFFFF" android:strokeAlpha="0.55" android:strokeWidth="22" android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M222,62 L126,62 Q100,62 100,88 L100,148 Q100,174 126,174 L196,174 Q222,174 222,148 L222,124 L172,124" />
+        <group>
+            <clip-path android:pathData="M89,51 H233 V148 A37,37 0 0,1 196,185 H126 A37,37 0 0,1 89,148 Z" />
+            <path android:fillColor="#FFFFFF" android:pathData="M96,140.9 h22 v44.1 h-22 z M122,121.3 h22 v63.7 h-22 z M148,97.9 h22 v87.1 h-22 z M174,72.5 h22 v112.5 h-22 z M200,51 h22 v134 h-22 z" />
+        </group>
+    </group>
+</vector>
