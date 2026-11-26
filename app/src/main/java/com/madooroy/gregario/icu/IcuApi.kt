@@ -20,7 +20,7 @@ class IcuApi(
     private val http: (url: String, auth: String) -> String = ::get,
     private val put: (url: String, auth: String, json: String) -> String = ::putJson,
 ) {
-    private val auth = "Basic " + base64("API_KEY:$apiKey")
+    private val auth = IcuAuth.header(apiKey)   // an API key, or an OAuth sign-in ([IcuAuth.OAUTH])
 
     /**
      * Planned rides on [date] (yyyy-MM-dd, the athlete's local date). A workout that cannot be ridden here

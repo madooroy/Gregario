@@ -22,14 +22,37 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
     run {
         RidersSection(gregario, riders, rider, riding = state.workout != null)
         if (riders.size > 1) Text("Settings for ${gregario.settings.riderName}", fontSize = 16.sp)
-        Text("Workouts come from your intervals.icu calendar. Paste your API key from intervals.icu › Settings › Developer Settings. " +
-            "It stays on this tablet, in Gregario's private storage.", fontSize = 14.sp, color = Color(0xFF9EAEC0))
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("intervals.icu API key") },
-            singleLine = true, visualTransformation = PasswordVisualTransformation())
+        val token by gregario.settings.icuToken.collectAsState()
+        val athlete by gregario.settings.icuAthlete.collectAsState()
+        val context = androidx.compose.ui.platform.LocalContext.current
+        Text("intervals.icu", fontSize = 16.sp)
+        if (token.isNotBlank()) {
+            Text("Connected as $athlete. Today's workouts and your FTP come from intervals.icu, and rides go back there.",
+                fontSize = 14.sp, color = Color(0xFF9EAEC0))
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton({ gregario.disconnectIcu() }) { Text("Disconnect intervals.icu") }
+        } else {
+            Text("Workouts come from your intervals.icu calendar, and rides go back there. Tap Connect, sign in to " +
+                "intervals.icu and approve Gregario. Gregario never sees your password.", fontSize = 14.sp, color = Color(0xFF9EAEC0))
+            Spacer(Modifier.height(8.dp))
+            var showKey by remember(rider) { mutableStateOf(saved.isNotBlank()) }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button({ runCatching { context.startActivity(android.content.Intent(context, IcuSignInActivity::class.java)) } }) {
+                    Text("Connect intervals.icu")
+                }
+                if (!showKey) TextButton({ showKey = true }) { Text("Use an API key instead") }
+            }
+            if (showKey) {
+                Text("API key: intervals.icu › Settings › Developer Settings. It stays on this tablet, in Gregario's private storage.",
+                    fontSize = 13.sp, color = Color(0xFF9EAEC0))
+                OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("intervals.icu API key") },
+                    singleLine = true, visualTransformation = PasswordVisualTransformation())
+                Spacer(Modifier.height(6.dp))
+                Button({ gregario.settings.setApiKey(key); gregario.refresh() }) { Text("Save & test") }
+            }
+        }
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button({ gregario.settings.setApiKey(key); gregario.refresh() }) { Text("Save & test") }
             // Drag the panel by its handle to put it anywhere; this button steps through the four corners.
             OutlinedButton({ gregario.settings.setPlacement(com.madooroy.gregario.PanelPlacement.nextCorner(place)) }) { Text("Panel: ${place.label()}") }
             val lead by gregario.settings.climbLead.collectAsState()
@@ -42,7 +65,7 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
             }
         }
         // Without intervals.icu: workout files (Open with Gregario) are ridden at this FTP.
-        if (saved.isBlank()) {
+        if (saved.isBlank() && token.isBlank()) {
             Spacer(Modifier.height(10.dp))
             val manual by gregario.settings.manualFtp.collectAsState()
             var ftpText by remember(rider) { mutableStateOf(if (manual > 0) manual.toString() else "") }
@@ -60,7 +83,7 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
         val status = when {
             state.loading -> "Checking intervals.icu…"
             state.message != null -> state.message!!
-            saved.isNotBlank() && state.ftp > 0 -> "Connected · FTP ${state.ftp} W · ${state.today.size} workout(s) today"
+            (saved.isNotBlank() || token.isNotBlank()) && state.ftp > 0 -> "Connected · FTP ${state.ftp} W · ${state.today.size} workout(s) today"
             else -> ""
         }
         Text(status, fontSize = 14.sp)
@@ -106,7 +129,7 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
 @Composable
 private fun RidersSection(gregario: Gregario, riders: List<com.madooroy.gregario.Rider>, rider: String, riding: Boolean) {
     Text("Riders", fontSize = 16.sp)
-    Text("Each rider has their own intervals.icu key, FTP, Strava and workout files. With two or more, the panel asks " +
+    Text("Each rider has their own intervals.icu sign-in, FTP, Strava and workout files. With two or more, the panel asks " +
         "who's riding once a day.", fontSize = 13.sp, color = Color(0xFF9EAEC0))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (r in riders) {

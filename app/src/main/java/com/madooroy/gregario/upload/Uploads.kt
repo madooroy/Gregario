@@ -63,7 +63,7 @@ private fun idText(v: Any?): String? = when (v) { null -> null; is Double -> v.t
  * then sets its name, description and RPE.
  */
 class IcuUploader(apiKey: String, private val http: Http = Http.JVM, private val base: String = "https://intervals.icu/api/v1") {
-    private val auth = mapOf("Authorization" to "Basic " + IcuApi.base64("API_KEY:$apiKey"))
+    private val auth = mapOf("Authorization" to com.madooroy.gregario.icu.IcuAuth.header(apiKey))
 
     /** [id]: the activity (null if intervals.icu already has this file). [warning]: uploaded, but something after it failed. */
     data class Result(val id: String?, val warning: String? = null)

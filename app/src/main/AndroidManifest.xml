@@ -33,6 +33,12 @@
             </intent-filter>
         </activity>
 
+        <!-- "Connect intervals.icu": intervals.icu's sign-in page inside Gregario (no browser on the Peloton). -->
+        <activity
+            android:name="com.madooroy.gregario.ui.IcuSignInActivity"
+            android:exported="false"
+            android:excludeFromRecents="true" />
+
         <!-- "Open with" / "Share to" for workout files (.zwo, .mrc, .erg). Workout files arrive with unhelpful
              MIME types, so the filters are broad and the activity checks the content. -->
         <activity

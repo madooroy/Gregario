@@ -319,13 +319,13 @@ class Gregario private constructor(private val app: android.app.Application) {
         updateDrop()   // the Wi-Fi address may have changed since the panel opened (review N6)
         if (refreshJob?.isActive == true) return
         refreshRetry?.cancel(); refreshRetry = null
-        val key = settings.apiKey.value
+        val key = settings.icuCredential()
         if (key.isBlank()) {
             // No intervals.icu: workout files only, ridden at the FTP typed in the settings.
             val ftp = settings.manualFtp.value.takeIf { it in FTP_RANGE } ?: 0
             mutableState.update { it.copy(ftp = ftp, todayDate = today(), today = emptyList(),
-                message = if (ftp == 0) "Set your FTP (or an intervals.icu API key) in the Gregario app"
-                          else "No intervals.icu key: ride your workout files") }
+                message = if (ftp == 0) "Connect intervals.icu (or set your FTP) in the Gregario app"
+                          else "intervals.icu not connected: ride your workout files") }
             loadFiles(); return
         }
         val date = today()
@@ -564,7 +564,7 @@ class Gregario private constructor(private val app: android.app.Application) {
                     for (r in settings.riders.value) {
                         val store = settings.storeFor(r.id)
                         val strava = stravaFor(r.id)
-                        val done = runCatching { queueFor(r.id).process(store.apiKey.takeIf { it.isNotBlank() }?.let { IcuUploader(it) },
+                        val done = runCatching { queueFor(r.id).process(store.icuCredential.takeIf { it.isNotBlank() }?.let { IcuUploader(it) },
                             strava.takeIf { it.configured }) }.getOrDefault(emptyList())
                         if (r.id == current) mineNow = done
                     }
@@ -612,6 +612,15 @@ class Gregario private constructor(private val app: android.app.Application) {
         }
     }
 
+    /** "Connect intervals.icu" finished: save the sign-in for the rider who started it, then load workouts and send waiting rides. */
+    fun icuSignedIn(grant: com.madooroy.gregario.icu.IcuOAuth.Grant, riderId: String) {
+        settings.setIcuToken(grant.token, grant.athlete, riderId)
+        if (riderId == settings.rider.value) refresh()
+        processUploads()
+    }
+    /** Forget the sign-in on this tablet (the rider can also revoke Gregario at intervals.icu › Settings › Apps). */
+    fun disconnectIcu() { settings.setIcuToken("", ""); refresh() }
+
     fun forgetStrava() { stravaAccount.forget(); mutableState.update { it.copy(strava = "Not connected") } }
 
     // Each button acts on the bike at once (one session tick), not at the next loop round up to a second later.
@@ -632,8 +641,8 @@ class Gregario private constructor(private val app: android.app.Application) {
      * Later workouts use it; this ride keeps the FTP it was ridden at.
      */
     fun setIndoorFtp(watts: Int) {
-        val key = settings.apiKey.value; val rider = settings.rider.value
-        if (key.isBlank()) { mutableState.update { it.copy(ftpStatus = "No intervals.icu API key") }; return }
+        val key = settings.icuCredential(); val rider = settings.rider.value
+        if (key.isBlank()) { mutableState.update { it.copy(ftpStatus = "intervals.icu not connected") }; return }
         if (watts !in FTP_RANGE) { mutableState.update { it.copy(ftpStatus = "$watts W is outside ${FTP_RANGE.first}–${FTP_RANGE.last} W") }; return }
         mutableState.update { it.copy(ftpStatus = "Setting indoor FTP to $watts W…") }
         scope.launch {

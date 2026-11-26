@@ -27,6 +27,8 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
         if (mutableRiders.value.none { it.id == id }) return
         prefs.edit().putString("rider", id).apply(); mutableRider.value = id
         mutableApiKey.value = prefs.getString(k(KEY_API), "").orEmpty()
+        mutableIcuToken.value = prefs.getString(k(KEY_ICU_TOKEN), "").orEmpty()
+        mutableIcuAthlete.value = prefs.getString(k(KEY_ICU_ATHLETE), "").orEmpty()
         mutableManualFtp.value = prefs.getInt(k("manualFtp"), 0)
     }
 
@@ -72,6 +74,8 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
 
     inner class RiderStore(val id: String) : com.madooroy.gregario.upload.StravaStore {
         val apiKey: String get() = prefs.getString(k(KEY_API, id), "").orEmpty()
+        /** This rider's intervals.icu sign-in (preferred) or API key, for [com.madooroy.gregario.icu.IcuAuth]. */
+        val icuCredential: String get() = credential(prefs.getString(k(KEY_ICU_TOKEN, id), "").orEmpty(), apiKey)
         // A rider without their own Strava API application uses the first rider's (Strava allows one athlete per
         // application until Strava raises the limit, so each rider may need their own: strava.com/settings/api).
         override var clientId: String
@@ -113,6 +117,19 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
     private val mutableApiKey = MutableStateFlow(prefs.getString(k(KEY_API), "").orEmpty())
     val apiKey: StateFlow<String> = mutableApiKey
     fun setApiKey(key: String) { prefs.edit().putString(k(KEY_API), key.trim()).apply(); mutableApiKey.value = key.trim() }
+
+    /** "Connect intervals.icu": the OAuth token and whose account it is, for the rider who started the sign-in. */
+    private val mutableIcuToken = MutableStateFlow(prefs.getString(k(KEY_ICU_TOKEN), "").orEmpty())
+    val icuToken: StateFlow<String> = mutableIcuToken
+    private val mutableIcuAthlete = MutableStateFlow(prefs.getString(k(KEY_ICU_ATHLETE), "").orEmpty())
+    val icuAthlete: StateFlow<String> = mutableIcuAthlete
+    fun setIcuToken(token: String, athlete: String, riderId: String = rider.value) {
+        prefs.edit().putString(k(KEY_ICU_TOKEN, riderId), token).putString(k(KEY_ICU_ATHLETE, riderId), athlete).commit()
+        if (riderId == rider.value) { mutableIcuToken.value = token; mutableIcuAthlete.value = athlete }
+    }
+    /** What the current rider uses for intervals.icu: the sign-in if there is one, else the API key ("" = neither). */
+    fun icuCredential(): String = credential(icuToken.value, apiKey.value)
+    private fun credential(token: String, key: String) = token.takeIf { it.isNotBlank() }?.let { com.madooroy.gregario.icu.IcuAuth.OAUTH + it } ?: key
 
     /** Where the panel sits (dragged anywhere). Before Nov 20 only a corner was kept: bottom-left or bottom-right. */
     private val mutablePlacement = MutableStateFlow(PanelPlacement.decode(prefs.getString(KEY_PLACE, null))
@@ -173,6 +190,7 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
         fun startOnBootSet(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_START_ON_BOOT, false)
 
+        const val KEY_ICU_TOKEN = "icuToken"; const val KEY_ICU_ATHLETE = "icuAthlete"
         const val KEY_API = "icuApiKey"; const val KEY_RIGHT = "panelRight"; const val KEY_PLACE = "panelPlace"; const val KEY_COMPACT = "panelCompact"
         const val KEY_FTP = "lastFtp"; const val KEY_LAST = "lastWorkoutJson"
     }
