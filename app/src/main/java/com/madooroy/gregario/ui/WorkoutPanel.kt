@@ -232,6 +232,15 @@ private fun TodayList(gregario: Gregario, s: PanelState) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Today", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Fg, modifier = Modifier.weight(1f))
         Pill(if (s.loading) "Loading…" else "Refresh", { gregario.refresh() })
+        // Gregario's own screen in one tap (settings, riders, bike): the Peloton tablet has no app drawer. Only here,
+        // with no workout open, so it can't be hit mid-ride. Its Ride button comes back to Peloton.
+        val context = androidx.compose.ui.platform.LocalContext.current
+        Pill("⚙", {
+            runCatching {
+                context.startActivity(android.content.Intent(context, MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            }
+        }, Modifier.padding(start = 6.dp), pad = 10.dp)
     }
     // Gregario rides through Grupetto's DirCon: say so plainly when Grupetto isn't there.
     s.bikeLink?.let { Text(it, fontSize = 12.sp, color = NoteFg) }
