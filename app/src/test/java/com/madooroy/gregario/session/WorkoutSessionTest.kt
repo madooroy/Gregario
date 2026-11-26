@@ -14,15 +14,17 @@ class WorkoutSessionTest {
     private class FakeBike : ErgSink {
         val sent = mutableListOf<Int>(); var releases = 0; var fresh = true
         var erg = false; var target = 0; var external: String? = null; var message = "Ready"; var knobbed = false
-        var connected = true
+        var connected = true; var noErg = false; var connection = 0
         override fun setErg(watts: Int): Boolean {
-            if (!connected || !fresh || watts !in 25..1000) return false
+            if (!connected || !fresh || noErg || watts !in 25..1000) return false
             sent += watts; erg = true; target = watts; external = null; knobbed = false; return true
         }
         override fun release(): Boolean { if (!fresh) return false; releases++; erg = false; return true }
-        override fun status() = BikeStatus(erg && connected, target, external, if (connected) message else "not connected", knobbed, connected = connected)
+        override fun status() = BikeStatus(erg && connected, target, external, if (connected) message else "not connected", knobbed, noErg = noErg, connected = connected, connection = connection)
         /** The connection drops (a new connection holds nothing). */
         fun drop() { connected = false; erg = false; target = 0 }
+        /** Down and back between two ticks: a new connection that holds nothing, never seen down. */
+        fun blip() { erg = false; target = 0; message = "ready"; connection++ }
         fun knob() { erg = false; message = "Resistance changed manually"; knobbed = true }
         fun lostData() { erg = false; message = "Bike+ data is stale"; knobbed = false }
         fun shift(d: Int) { target += d }
@@ -272,5 +274,28 @@ class WorkoutSessionTest {
         bike.knob(); r.go(5)
         assertEquals(1, s.riderStep); assertEquals(n, bike.sent.size); assertTrue(!bike.erg)
         r.go(15); assertEquals(150, bike.target)                       // ERG back for the 50% step
+    }
+
+    @Test fun `ERG switched on mid-ride is found within a minute, no pause (review)`() {
+        val long = Workout("L", listOf(Step.Steady(300, 60.0)))
+        val bike = FakeBike().apply { noErg = true }; val s = WorkoutSession(long, 300, bike); val r = Ride(s)
+        s.tick(0, true, 0f, 90f, null); s.player.start(0)
+        r.go(30)
+        assertTrue(s.noErgBike); assertEquals(NO_ERG_NOTICE, s.notice); assertTrue(bike.sent.isEmpty())
+        r.go(40)                                                        // a try at 61 s, still no ERG: no pause, no alert
+        assertEquals(WorkoutPlayer.State.Running, s.player.state); assertEquals(null, s.alert)
+        bike.noErg = false                                              // the rider switches ERG on in Grupetto
+        r.go(65)
+        assertEquals(listOf(180), bike.sent); assertTrue(!s.noErgBike); assertEquals(null, s.notice)
+        assertEquals(WorkoutPlayer.State.Running, s.player.state)
+    }
+
+    @Test fun `a reconnect between two ticks is sent the target again, not Control taken (review)`() {
+        val bike = FakeBike(); val s = WorkoutSession(w, 329, bike); val r = Ride(s)
+        s.tick(0, true, 0f, 90f, null); s.player.start(0)
+        r.go(13); assertEquals(362, bike.target)
+        bike.blip(); r.go(1)
+        assertEquals(WorkoutPlayer.State.Running, s.player.state); assertEquals(null, s.alert)
+        assertEquals(362, bike.target); assertEquals(listOf(165, 362, 362), bike.sent)
     }
 }

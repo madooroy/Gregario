@@ -176,8 +176,18 @@ class Gregario private constructor(private val app: android.app.Application) {
         DirConLink(host = b.host ?: "", clock = { SystemClock.elapsedRealtime() }, log = { Timber.tag(LOG_TAG).i(it) },
             name = b.name, lookFor = b.lookFor, handBackCommand = b.handBack, holdsAfterDisconnect = b.holdsAfterDisconnect,
             holdsThroughStops = b.holdsThroughStops, followsShifts = b.followsShifts,
-            owedAtStart = b.holdsAfterDisconnect && b.host != null && settings.ss2kOwedHost == b.host,
-            onOwed = { owed -> settings.ss2kOwedHost = if (owed) b.host.orEmpty() else "" })
+            readTimeoutMs = if (b.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K) DirConLink.SS2K_READ_TIMEOUT_MS else DirConLink.READ_TIMEOUT_MS,
+            owedAtStart = b.holdsAfterDisconnect && b.host != null && owedStill(settings.ss2kOwedHost, b.host!!),
+            onOwed = { owed -> settings.ss2kOwedHost = if (owed) "${b.host.orEmpty()}|${System.currentTimeMillis()}" else "" })
+
+    /**
+     * A hand-back owed to this SmartSpin2K from an earlier run ("host|time"), honoured for [OWED_KEEP_MS] only: after a
+     * crash days ago another app may be riding it now, and Gregario must not butt in (review).
+     */
+    private fun owedStill(saved: String, host: String): Boolean {
+        val h = saved.substringBefore('|'); val at = saved.substringAfter('|', "").toLongOrNull() ?: return false
+        return h == host && System.currentTimeMillis() - at in 0..OWED_KEEP_MS
+    }
 
     /**
      * Where the bike's numbers come from. With a SmartSpin2K doing the ERG, power, cadence and heart rate are read
@@ -741,7 +751,8 @@ class Gregario private constructor(private val app: android.app.Application) {
 
     private fun tickNow() {
         // After the loop failed (review): the panel's buttons must not tick a broken session and crash the app.
-        if (loop?.isActive != true) return
+        // Still show what the button did (End reaches the finish screen, so the ride can be saved; review: buttons looked dead).
+        if (loop?.isActive != true) { runCatching { publish() }; return }
         val s = session ?: return
         val now = SystemClock.elapsedRealtime()
         val smp = sample()
@@ -819,7 +830,9 @@ class Gregario private constructor(private val app: android.app.Application) {
                 updateLive()
                 val note = if (link.connected) null else linkStatus()
                 // Lost mid-workout (it was connected): the panel's amber border until it is back.
-                val lost = if (session != null && !link.connected && link.lostAt != null) "Lost the ${bikeChoice.name} · reconnecting" else null
+                // Only once the ride has started: on the Ready screen the "No bike found" card says what to do instead.
+                val started = session?.player?.state.let { it != null && it != WorkoutPlayer.State.Ready }
+                val lost = if (started && !link.connected && link.lostAt != null) "Lost the ${bikeChoice.name} · reconnecting" else null
                 val hint = reader?.let { rd ->
                     if (!rd.connected && SystemClock.elapsedRealtime() - attachedAt > HINT_GRACE_MS)
                         "Switch DirCon on in Grupetto: power then comes straight from Grupetto, a second sooner" else null
@@ -954,6 +967,7 @@ class Gregario private constructor(private val app: android.app.Application) {
         /** How long the Grupetto reader may take to connect before the DirCon hint shows. */
         private const val HINT_GRACE_MS = 10_000L
         private const val NO_POWER_MS = 15_000L
+        private const val OWED_KEEP_MS = 10 * 60_000L
         private const val GRUPETTO_CHECK_MS = 5_000L
         /** Grupetto's package (seliapop's original id, kept by doudar's Grupetto). */
         const val GRUPETTO_PACKAGE = "com.spop.poverlay"

@@ -356,8 +356,9 @@ private fun wattsSize(w: Int?) = if (w != null && w >= 1000) 25.sp else 30.sp
 @Composable
 private fun UnitW() = Text(" W", fontSize = 14.sp, color = Dim, maxLines = 1, softWrap = false, modifier = Modifier.padding(bottom = 3.dp))
 
-/** Gap between the Target and Now columns. */
+/** How long a step's note shows: at the step's start and at the start of each ride minute. */
 private const val NOTE_SECONDS = 10
+/** Gap between the Target and Now columns. */
 private val COL_GAP = 8.dp   // 12 cut "60–70% FTP" to "60–70% FT" (Nov 25 ride)
 
 /** Start / Pause / Resume: a third of the 252-wide action row less its two 6-dp gaps. */

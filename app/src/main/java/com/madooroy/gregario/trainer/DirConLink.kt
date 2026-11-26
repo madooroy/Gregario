@@ -90,6 +90,8 @@ class DirConLink(
     @Volatile var connected = false; private set
     /** When the connection was last lost while running ([clock]), or null while connected or never connected. */
     @Volatile var lostAt: Long? = null; private set
+    /** Counts connections: a change tells the session it is a new connection even if no tick saw it down. */
+    @Volatile private var generation = 0
 
     // Bike data, written by the reader thread.
     @Volatile private var sample: BikeSample? = null
@@ -130,6 +132,7 @@ class DirConLink(
     fun start() {
         if (stopping) { startAfterStop = true; return }
         if (running) return
+        lostAt = null   // a drop from an earlier run is not this run's (review: a fresh Ready screen said "Lost")
         // No address (a SmartSpin2K not found or typed yet): nothing to connect to. An empty host would resolve to this
         // tablet, which is Grupetto (review).
         if (host.isBlank()) { message = "No address"; return }
@@ -141,6 +144,7 @@ class DirConLink(
     /** Hand the bike back (if we hold ERG) and close the connection. Returns at once; the work runs off this thread. */
     fun stop() {
         startAfterStop = false
+        lostAt = null
         if (!running || stopping) return
         // Held, owed, or on its way (a target sent but not yet answered): hand it back either way.
         val held = connected && (applied != null || haveControl || desired != null || owed)
@@ -293,7 +297,8 @@ class DirConLink(
     override fun status(): BikeStatus {
         val external = externalAt?.takeIf { clock() - it < EXTERNAL_MS }?.let { "Another app" }
         return BikeStatus(erg = connected && ergOn, targetWatts = targetWatts, externalControl = external,
-            message = if (connected) message else "$name not connected", knob = knob, noErg = noErg, connected = connected)
+            message = if (connected) message else "$name not connected", knob = knob, noErg = noErg, connected = connected,
+            connection = generation)
     }
 
     // ---- connection ----
@@ -313,6 +318,7 @@ class DirConLink(
                 for (c in if (readOnly) listOf(INDOOR_BIKE_DATA, HEART_RATE) else listOf(INDOOR_BIKE_DATA, HEART_RATE, MACHINE_STATUS, CONTROL_POINT))
                     send(MSG_ENABLE_NOTIFICATIONS, uuidBytes(c) + byteArrayOf(1))
                 fails = 0
+                generation++
                 connected = true; lostAt = null
                 message = "ready"
                 log("DirCon connected to $host:$port")
@@ -458,7 +464,10 @@ class DirConLink(
         private const val RETRY_MS = 1_000L
         private const val MAX_FAILS = 5
         /** No bike data for this long: the connection is dead and is reopened. */
-        const val READ_TIMEOUT_MS = 3_000
+        /** Grupetto (1 Hz, its sensor poll can stall a moment): a reconnect there means asking for control again. */
+        const val READ_TIMEOUT_MS = 5_000
+        /** SmartSpin2K (about 2 Hz, always): 3 s of nothing is a dead link, and reconnecting it costs nothing. */
+        const val SS2K_READ_TIMEOUT_MS = 3_000
         /** After "can't do ERG", a target is tried again this often. */
         private const val NO_ERG_RETRY_MS = 60_000L
 

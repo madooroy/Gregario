@@ -8,6 +8,8 @@ import com.madooroy.gregario.workout.WorkoutPlayer
 import kotlin.math.pow
 
 /** Shown when the bike can't hold ERG: the workout goes on as targets to follow. */
+/** A little over the link's own one-minute retry, so the link lets the try through. */
+const val NO_ERG_PROBE_MS = 61_000L
 const val NO_ERG_NOTICE = "No ERG on this bike: follow the target with the resistance knob"
 
 /**
@@ -16,7 +18,9 @@ const val NO_ERG_NOTICE = "No ERG on this bike: follow the target with the resis
  * [noErg]: the bike can't hold ERG at all (a Peloton Bike without a SmartSpin2K, or Bike+ ERG off in Grupetto).
  */
 data class BikeStatus(val erg: Boolean, val targetWatts: Int, val externalControl: String?, val message: String, val knob: Boolean = false,
-                      val noErg: Boolean = false, val connected: Boolean = true)
+                      val noErg: Boolean = false, val connected: Boolean = true,
+                      /** Which connection this is (counts up on each connect); 0 when the bike doesn't count. */
+                      val connection: Int = 0)
 
 /** What the session needs from the bike: hold a target, hand it back, and report how it stands. */
 interface ErgSink {
@@ -122,6 +126,9 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
     var linkDown = false; private set
     /** The bike can't hold ERG (see [BikeStatus.noErg]): targets are shown to follow, never sent. */
     var noErgBike = false; private set
+    private var lastConnection: Int? = null
+    /** When ERG was last tried on a "no ERG" bike: tried again each [NO_ERG_PROBE_MS] (ERG switched on mid-ride). */
+    private var noErgProbeAt = 0L
     private var needsRelease = false     // we held ERG and have not yet handed it back
     private var failSince: Long? = null
     private var offsetStep = -1
@@ -164,9 +171,13 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
         // The connection dropped: ride on, keep what we hold, and send it again once the connection is back (Nov 26:
         // the ride paused and needed a tap; the SS2K had let go by the time the data came back).
         val link = bike.status()
+        // A new connection since the last tick, even one no tick saw down (down and back within a second; review):
+        // it holds nothing, so it's a reconnect, not "Control taken".
+        val newConnection = link != null && link.connected && lastConnection != null && link.connection != lastConnection
+        if (link != null) lastConnection = link.connection
         if (link != null && !link.connected) {
             if (!linkDown && holding) linkDown = true
-        } else if (linkDown) {
+        } else if (linkDown || newConnection) {
             linkDown = false
             if (holding) sentWatts = null      // a new connection holds nothing: send the target again this tick
         }
@@ -258,9 +269,15 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
         // there is a knob turn in that step (review K1: it was taken as the step before, and undone at once).
         if (holding && want != null && want == sentWatts) sentStep = wantStep
         if (want != null && snap.state == WorkoutPlayer.State.Ready && preloadBlocked) want = null
+        // ERG switched on mid-ride (Bike+ ERG in Grupetto): the bike holds our target again, the notice goes.
+        if (noErgBike && holding && bike.status()?.let { it.erg && !it.noErg } == true) {
+            noErgBike = false; if (notice == NO_ERG_NOTICE) notice = null
+        }
+        var probing = false
         if (want != null && (noErgBike || bike.status()?.noErg == true)) {
-            if (!noErgBike) { noErgBike = true; notice = NO_ERG_NOTICE }
-            want = null
+            if (!noErgBike) { noErgBike = true; notice = NO_ERG_NOTICE; noErgProbeAt = nowMs }
+            // Once a minute, try again (review: noErgBike was sticky, so the link's own retry never ran).
+            if (nowMs - noErgProbeAt >= NO_ERG_PROBE_MS) { noErgProbeAt = nowMs; probing = true } else want = null
         }
 
         // Never take the bike from another app: whenever we are about to (re)engage ERG, check for one first.
@@ -277,8 +294,9 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
             if (want != sentWatts || !holding) {
                 if (bike.setErg(want!!)) { sentWatts = want; sentStep = if (led) snap.stepIndex + 1 else snap.stepIndex
                     holding = true; needsRelease = true; failSince = null }
-                else if (linkDown || bike.status()?.connected == false) {
-                    failSince = null                // not a refusal: the connection is down, sent again when it's back
+                else if (probing || linkDown || bike.status()?.connected == false) {
+                    // Not a refusal: still no ERG (tried again next minute), or the connection is down (sent when it's back).
+                    failSince = null
                 } else {
                     val since = failSince ?: nowMs.also { failSince = it }
                     if (nowMs - since >= failMs) {
