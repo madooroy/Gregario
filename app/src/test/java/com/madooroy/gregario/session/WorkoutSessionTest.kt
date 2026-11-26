@@ -14,12 +14,15 @@ class WorkoutSessionTest {
     private class FakeBike : ErgSink {
         val sent = mutableListOf<Int>(); var releases = 0; var fresh = true
         var erg = false; var target = 0; var external: String? = null; var message = "Ready"; var knobbed = false
+        var connected = true
         override fun setErg(watts: Int): Boolean {
-            if (!fresh || watts !in 25..1000) return false
+            if (!connected || !fresh || watts !in 25..1000) return false
             sent += watts; erg = true; target = watts; external = null; knobbed = false; return true
         }
         override fun release(): Boolean { if (!fresh) return false; releases++; erg = false; return true }
-        override fun status() = BikeStatus(erg, target, external, message, knobbed)
+        override fun status() = BikeStatus(erg && connected, target, external, if (connected) message else "not connected", knobbed, connected = connected)
+        /** The connection drops (a new connection holds nothing). */
+        fun drop() { connected = false; erg = false; target = 0 }
         fun knob() { erg = false; message = "Resistance changed manually"; knobbed = true }
         fun lostData() { erg = false; message = "Bike+ data is stale"; knobbed = false }
         fun shift(d: Int) { target += d }
@@ -45,6 +48,31 @@ class WorkoutSessionTest {
         assertEquals(362, bike.sent.last())
         r.go(40)
         assertEquals(WorkoutPlayer.State.Finished, s.player.state); assertEquals(2, bike.releases)
+    }
+
+    @Test fun `a dropped connection never pauses the ride, and the target is sent again when it is back`() {
+        val bike = FakeBike(); val s = WorkoutSession(w, 329, bike); val r = Ride(s)
+        s.tick(0, true, 0f, 90f, null); s.player.start(0); r.go(12)       // into the 362 W step
+        assertEquals(362, bike.sent.last())
+        bike.drop()
+        r.go(10)                                                             // across the step change to 165 W
+        assertEquals(WorkoutPlayer.State.Running, s.player.state)
+        assertNull(s.alert); assertTrue(s.linkDown)
+        bike.connected = true
+        r.go(1)
+        assertEquals(165, bike.sent.last())                                  // the current step's target, at once
+        assertTrue(!s.linkDown); assertEquals(WorkoutPlayer.State.Running, s.player.state); assertNull(s.alert)
+    }
+
+    @Test fun `a data gap records nothing but the clock runs on`() {
+        val bike = FakeBike(); val s = WorkoutSession(w, 329, bike)
+        s.tick(0, true, 0f, 90f, null); s.player.start(0)
+        var t = 0L
+        repeat(5) { t += 1000; s.tick(t, true, 200f, 90f, 120f) }
+        val before = s.recorder.seconds
+        repeat(3) { t += 1000; s.tick(t, true, 0f, 0f, null, dataOk = false) }
+        assertEquals(before, s.recorder.seconds, 0.01)
+        assertEquals(8, s.player.snapshot().elapsed)
     }
 
     @Test fun `another app taking over pauses the workout and is never undone`() {

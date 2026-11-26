@@ -62,6 +62,14 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
     var riderConfirmedAt: Long
         get() = prefs.getLong("riderConfirmedAt", 0)
         set(v) { prefs.edit().putLong("riderConfirmedAt", v).apply() }
+    /**
+     * A SmartSpin2K (this address) may still hold a target: Gregario closed while it couldn't be reached. The hand-back
+     * is sent the next time Gregario connects to it (review: an SS2K was left in ERG after a Wi-Fi drop or a crash).
+     */
+    var ss2kOwedHost: String
+        get() = prefs.getString("ss2kOwedHost", "").orEmpty()
+        set(v) { prefs.edit().putString("ss2kOwedHost", v).apply() }
+
     var lastRideEndAt: Long
         get() = prefs.getLong("lastRideEndAt", 0)
         set(v) { prefs.edit().putLong("lastRideEndAt", v).apply() }

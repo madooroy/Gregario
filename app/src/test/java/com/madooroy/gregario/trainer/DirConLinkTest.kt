@@ -29,6 +29,7 @@ private class FakeGrupetto {
     @Volatile var echoTarget = false    // like a SmartSpin2K: status 0x08 (target power changed) after each target
     @Volatile var noErg = false         // like Grupetto on a Peloton Bike (no motor): target power "not supported"
     @Volatile var client: Socket? = null
+    @Volatile var silent = false        // stop sending bike data but keep the socket open (a dead Wi-Fi link)
     @Volatile var power = 150; @Volatile var cadence = 85; @Volatile var resistance = 40
     @Volatile var running = true
     val accepted = java.util.concurrent.atomic.AtomicInteger()
@@ -57,7 +58,7 @@ private class FakeGrupetto {
             val b = ByteBuffer.allocate(13).order(java.nio.ByteOrder.LITTLE_ENDIAN)
             b.putShort((0x0004 or 0x0020 or 0x0040 or 0x0200).toShort()).putShort(3000).putShort((cadence * 2).toShort())
                 .putShort(resistance.toShort()).putShort(power.toShort()).put(132.toByte())
-            send(s, 6, DirConLink.uuidBytes(DirConLink.INDOOR_BIKE_DATA) + b.array().copyOf(11))
+            if (!silent) send(s, 6, DirConLink.uuidBytes(DirConLink.INDOOR_BIKE_DATA) + b.array().copyOf(11))
             Thread.sleep(50)
         }
     }
@@ -265,26 +266,100 @@ class DirConLinkTest {
         } finally { fake.close() }
     }
 
-    private fun ss2kLink(fake: FakeGrupetto): DirConLink {
+    private fun ss2kLink(fake: FakeGrupetto, owedAtStart: Boolean = false, onOwed: (Boolean) -> Unit = {}, readTimeoutMs: Int = 3_000): DirConLink {
         val ss2k = BikeChoice(BikeChoice.Kind.SS2K, "127.0.0.1")
         return DirConLink("127.0.0.1", fake.port, ::clock, retryMs = 100, name = ss2k.name, lookFor = ss2k.lookFor,
             handBackCommand = ss2k.handBack, holdsAfterDisconnect = ss2k.holdsAfterDisconnect,
-            holdsThroughStops = ss2k.holdsThroughStops, followsShifts = ss2k.followsShifts).also {
+            holdsThroughStops = ss2k.holdsThroughStops, followsShifts = ss2k.followsShifts,
+            readTimeoutMs = readTimeoutMs, owedAtStart = owedAtStart, onOwed = onOwed).also {
             it.start(); assertTrue("connected", waitFor { it.connected && it.freshSample() != null })
         }
     }
 
+    /** Nov 26: an SS2K's Wi-Fi dropped and the socket stayed silently dead for 85 s. Silence past the timeout reconnects. */
+    @Test fun aSilentConnectionIsNoticedAndReopened() {
+        val fake = FakeGrupetto(); val link = ss2kLink(fake, readTimeoutMs = 400)
+        try {
+            assertTrue(link.setErg(200)); sent(fake, "00", "05 c8 00")
+            fake.silent = true
+            assertTrue("noticed", waitFor(2_000) { !link.connected })
+            assertNotNull(link.lostAt)
+            assertFalse(link.status().connected)
+            fake.silent = false
+            assertTrue("reconnected", waitFor { fake.accepted.get() >= 2 && link.connected })
+            // The SS2K kept 200 W through the drop: restored, never handed back to neutral in between.
+            assertTrue(waitFor { fake.commands.count { it == "05 c8 00" } >= 2 })
+            assertFalse(fake.commands.contains(neutral))
+        } finally { link.stop(); fake.close() }
+    }
+
+    /** A target changed while the connection was down is the one restored. */
+    @Test fun aTargetChangedDuringADropIsTheOneRestored() {
+        val fake = FakeGrupetto(); val link = ss2kLink(fake)
+        try {
+            assertTrue(link.setErg(200)); sent(fake, "00", "05 c8 00")
+            fake.close()
+            assertTrue(waitFor { !link.connected })
+            assertFalse(link.setErg(150))                        // not sent now (not connected) …
+            val again = FakeGrupetto()
+            // … the reconnect goes to a new server on another port in this test, so just check what is wanted.
+            assertEquals(150, link.wanted())
+            again.close()
+        } finally { link.stop() }
+    }
+
+    /** Bike data only: Grupetto read beside an SS2K is never asked for control. */
+    @Test fun aReadOnlyLinkNeverAsksForControl() {
+        val fake = FakeGrupetto()
+        val link = DirConLink("127.0.0.1", fake.port, ::clock, retryMs = 100, readOnly = true)
+        link.start()
+        try {
+            assertTrue(waitFor { link.connected && link.freshSample() != null })
+            assertFalse(link.setErg(200))
+            Thread.sleep(300)
+            assertTrue(fake.commands.isEmpty())
+            assertEquals(150f, link.freshSample()!!.power, 0.1f)
+        } finally { link.stop(); fake.close() }
+    }
+
+    /** Review: a hand-back owed when Gregario closed during a drop is sent the next time it connects. */
+    @Test fun aHandBackOwedFromAnEarlierRunIsSentOnConnect() {
+        val fake = FakeGrupetto(); val owed = CopyOnWriteArrayList<Boolean>()
+        val link = ss2kLink(fake, owedAtStart = true, onOwed = { owed += it })
+        try {
+            sent(fake, "00", neutral)
+            assertTrue(waitFor { owed.lastOrNull() == false })
+        } finally { link.stop(); fake.close() }
+    }
+
+    /** Review: a quick shift back to the step's target was dropped as an echo of our own write. */
+    @Test fun aQuickShiftBackIsAShift() {
+        val fake = FakeGrupetto().apply { echoTarget = true }; val link = ss2kLink(fake)
+        try {
+            assertTrue(link.setErg(200)); sent(fake, "00", "05 c8 00"); Thread.sleep(200)
+            fake.shift(210); assertTrue(waitFor { link.status().targetWatts == 210 })
+            fake.shift(200); assertTrue("shift back seen", waitFor { link.status().targetWatts == 200 })
+        } finally { link.stop(); fake.close() }
+    }
+
     private val neutral = "11 00 00 00 00 00 00"
 
-    /** Review finding 1: an SS2K keeps its target through a dropped connection; it is handed back once it is back. */
-    @Test fun aSmartSpin2KStillHoldingAfterAReconnectIsHandedBack() {
+    /**
+     * Review finding 1: an SS2K keeps its target through a dropped connection. Still wanted: restored on reconnect (no
+     * hand-back in between). Released while down: handed back once it is back.
+     */
+    @Test fun aSmartSpin2KStillHoldingAfterAReconnectIsRestoredOrHandedBack() {
         val fake = FakeGrupetto(); val link = ss2kLink(fake)
         try {
             assertTrue(link.setErg(200))
             sent(fake, "00", "05 c8 00")
             fake.dropClient()                                   // Wi-Fi drop: SS2K keeps 200 W
             assertTrue("reconnected", waitFor { fake.accepted.get() == 2 && link.connected })
-            sent(fake, "00", "05 c8 00", "00", neutral)         // control again, then the hand-back
+            sent(fake, "00", "05 c8 00", "00", "05 c8 00")      // control again, the same target
+            link.release()
+            fake.dropClient()
+            assertTrue("reconnected", waitFor { fake.accepted.get() == 3 && link.connected })
+            assertTrue(waitFor { fake.commands.lastOrNull() == neutral })
         } finally { link.stop(); fake.close() }
     }
 

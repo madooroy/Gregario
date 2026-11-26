@@ -16,7 +16,7 @@ const val NO_ERG_NOTICE = "No ERG on this bike: follow the target with the resis
  * [noErg]: the bike can't hold ERG at all (a Peloton Bike without a SmartSpin2K, or Bike+ ERG off in Grupetto).
  */
 data class BikeStatus(val erg: Boolean, val targetWatts: Int, val externalControl: String?, val message: String, val knob: Boolean = false,
-                      val noErg: Boolean = false)
+                      val noErg: Boolean = false, val connected: Boolean = true)
 
 /** What the session needs from the bike: hold a target, hand it back, and report how it stands. */
 interface ErgSink {
@@ -115,6 +115,11 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
 
     private var sentStep = -1
     private var holding = false          // we believe the bike is in ERG for us
+    /**
+     * The connection to the bike is down (Wi-Fi drop, a SmartSpin2K rebooting). Not "control taken": the workout runs on,
+     * nothing is counted as a failed write, and the target is sent again as soon as the connection is back.
+     */
+    var linkDown = false; private set
     /** The bike can't hold ERG (see [BikeStatus.noErg]): targets are shown to follow, never sent. */
     var noErgBike = false; private set
     private var needsRelease = false     // we held ERG and have not yet handed it back
@@ -155,9 +160,18 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
     /** Call about once a second. [pedaling] = fresh cadence above a few rpm. */
     fun tick(nowMs: Long, pedaling: Boolean, power: Float, cadence: Float, heartRate: Float?,
              wallMs: Long = System.currentTimeMillis(), speedMph: Float? = null, resistance: Int? = null,
-             erg: RideRecorder.Erg? = null): WorkoutPlayer.Snapshot {
+             erg: RideRecorder.Erg? = null, dataOk: Boolean = true): WorkoutPlayer.Snapshot {
+        // The connection dropped: ride on, keep what we hold, and send it again once the connection is back (Nov 26:
+        // the ride paused and needed a tap; the SS2K had let go by the time the data came back).
+        val link = bike.status()
+        if (link != null && !link.connected) {
+            if (!linkDown && holding) linkDown = true
+        } else if (linkDown) {
+            linkDown = false
+            if (holding) sentWatts = null      // a new connection holds nothing: send the target again this tick
+        }
         // Did someone else take the bike since the last tick?
-        if (holding) {
+        if (holding && !linkDown && sentWatts != null) {
             val st = bike.status()
             // The step the held target belongs to: a target sent early (climb lead) belongs to the next step, so a knob
             // turn in that lead second is a knob turn in the next step (review E1: it was undone at once).
@@ -209,7 +223,8 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
         val adv = minOf(player.elapsedExact - lastT, dt)
         lastT = player.elapsedExact
         // Finished counts too: the tick that ends the workout carries its last second.
-        if ((snap.state == WorkoutPlayer.State.Running || snap.state == WorkoutPlayer.State.Finished) && pedaling && adv > 0) {
+        // [dataOk] false: a gap in the bike data (connection down). The clock runs on, but no made-up second is recorded.
+        if ((snap.state == WorkoutPlayer.State.Running || snap.state == WorkoutPlayer.State.Finished) && pedaling && dataOk && adv > 0) {
             val step = player.stepOfLast(adv)
             record(adv, step, power.toDouble(), cadence.toDouble(), heartRate?.toDouble())
             recorder.add(wallMs, adv, power, cadence, heartRate, step, speedMph, resistance, erg)
@@ -262,7 +277,9 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
             if (want != sentWatts || !holding) {
                 if (bike.setErg(want!!)) { sentWatts = want; sentStep = if (led) snap.stepIndex + 1 else snap.stepIndex
                     holding = true; needsRelease = true; failSince = null }
-                else {
+                else if (linkDown || bike.status()?.connected == false) {
+                    failSince = null                // not a refusal: the connection is down, sent again when it's back
+                } else {
                     val since = failSince ?: nowMs.also { failSince = it }
                     if (nowMs - since >= failMs) {
                         player.pause(); failSince = null

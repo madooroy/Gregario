@@ -39,7 +39,7 @@ class DirConLink(
     private val port: Int = PORT,
     private val clock: () -> Long,
     private val log: (String) -> Unit = {},
-    private val retryMs: Long = 2_000,
+    private val retryMs: Long = 1_000,
     private val replyTimeoutMs: Long = 500,
     /** Who answers on [host]: "Grupetto", or "SmartSpin2K" (same DirCon and FTMS, over Wi-Fi), for the panel's words. */
     private val name: String = "Grupetto",
@@ -60,6 +60,17 @@ class DirConLink(
     override val holdsThroughStops: Boolean = false,
     /** The bike's FTMS "target changed" (0x08) can be the rider's shift (a SmartSpin2K); otherwise it is ignored. */
     private val followsShifts: Boolean = false,
+    /**
+     * Bike data only: no control is ever requested or sent. Used to read power from Grupetto on this tablet while a
+     * SmartSpin2K does the ERG (Grupetto is the bike's own reading; the SS2K only relays it, a second later).
+     */
+    private val readOnly: Boolean = false,
+    /** A dead connection is noticed when nothing arrives for this long (DirCon servers send bike data every second). */
+    private val readTimeoutMs: Int = READ_TIMEOUT_MS,
+    /** A hand-back owed from an earlier run of Gregario (it closed while the SS2K couldn't be reached): sent on connect. */
+    owedAtStart: Boolean = false,
+    /** Called when a hand-back becomes owed or is settled, so it can be kept across a restart of Gregario. */
+    private val onOwed: (Boolean) -> Unit = {},
 ) : ErgSink {
 
     @Volatile private var running = false
@@ -77,6 +88,8 @@ class DirConLink(
 
     /** Connected to Grupetto's DirCon now. */
     @Volatile var connected = false; private set
+    /** When the connection was last lost while running ([clock]), or null while connected or never connected. */
+    @Volatile var lostAt: Long? = null; private set
 
     // Bike data, written by the reader thread.
     @Volatile private var sample: BikeSample? = null
@@ -105,7 +118,8 @@ class DirConLink(
      * after failed writes, or when the hand-back raced the shutdown). Set when a target is sent; cleared only when the
      * hand-back is answered, another app holds the bike, or the bike let go by itself (knob; Grupetto on disconnect).
      */
-    @Volatile private var owed = false
+    @Volatile private var owed = owedAtStart
+        set(v) { if (field != v) { field = v; if (holdsAfterDisconnect) runCatching { onOwed(v) } } }
     /** [stop] is handing the bike back: no reconnecting, and the reader keeps reading so the answer arrives. */
     @Volatile private var stopping = false
     /** [start] was called while a stop was finishing: start again once it has. */
@@ -121,7 +135,7 @@ class DirConLink(
         if (host.isBlank()) { message = "No address"; return }
         running = true
         thread = Thread(::run, "gregario-dircon").apply { isDaemon = true; start() }
-        controlThread = Thread(::controlLoop, "gregario-dircon-control").apply { isDaemon = true; start() }
+        if (!readOnly) controlThread = Thread(::controlLoop, "gregario-dircon-control").apply { isDaemon = true; start() }
     }
 
     /** Hand the bike back (if we hold ERG) and close the connection. Returns at once; the work runs off this thread. */
@@ -146,6 +160,9 @@ class DirConLink(
         }, "gregario-dircon-stop").apply { isDaemon = true; start() }
     }
 
+    /** The target the workout wants held now (null: none), for tests. */
+    internal fun wanted(): Int? = desired
+
     /** The newest bike numbers, if they arrived in the last 1.5 s. */
     fun freshSample(): BikeSample? = sample?.takeIf { clock() - it.timestamp <= FRESH_MS }
 
@@ -168,12 +185,23 @@ class DirConLink(
     // ---- ErgSink ----
 
     override fun setErg(watts: Int): Boolean {
-        if (!connected) { message = "$name not connected"; return false }
+        if (readOnly) return false
+        if (!connected) {
+            // A bike that holds its target through a drop (SmartSpin2K): remember the newest target, so the reconnect
+            // restores it at once instead of handing back and taking control again (a jolt mid-interval).
+            if (holdsAfterDisconnect && desired != null) synchronized(stateLock) { desired = watts.coerceIn(0, MAX_WATTS) }
+            message = "$name not connected"; return false
+        }
         externalAt?.let { if (clock() - it < EXTERNAL_MS) return false }
-        if (noErg) return false
+        if (noErg) {
+            // Retried once a minute: the rider may switch Bike+ ERG on in Grupetto mid-ride (review: noErg was sticky).
+            if (clock() - noErgAt < NO_ERG_RETRY_MS) return false
+            noErg = false
+        }
         val w = watts.coerceIn(0, MAX_WATTS)
         // Shown as held at once (the session checks status() next tick); the control thread sends it.
-        synchronized(stateLock) { desired = w; ergOn = true; targetWatts = w; knob = false; fails = 0 }
+        // [fails] is not reset here: a ramp sends a new target every second, which hid failing writes (review).
+        synchronized(stateLock) { desired = w; ergOn = true; targetWatts = w; knob = false }
         message = "ERG $w W"
         synchronized(wake) { wake.notifyAll() }
         return true
@@ -249,9 +277,10 @@ class DirConLink(
     }
 
     /** The bike can't do ERG: stop asking for the rest of this connection; the session rides on without it. */
+    @Volatile private var noErgAt = 0L
     private fun cannotErg() {
         if (!noErg) log("DirCon: $name can't do ERG on this bike: targets are followed with the knob")
-        noErg = true; owed = false; message = resultText(RESULT_NOT_SUPPORTED, name)
+        noErg = true; noErgAt = clock(); owed = false; message = resultText(RESULT_NOT_SUPPORTED, name)
         synchronized(stateLock) { desired = null; ergOn = false; targetWatts = 0; applied = null }
     }
 
@@ -264,7 +293,7 @@ class DirConLink(
     override fun status(): BikeStatus {
         val external = externalAt?.takeIf { clock() - it < EXTERNAL_MS }?.let { "Another app" }
         return BikeStatus(erg = connected && ergOn, targetWatts = targetWatts, externalControl = external,
-            message = if (connected) message else "$name not connected", knob = knob, noErg = noErg)
+            message = if (connected) message else "$name not connected", knob = knob, noErg = noErg, connected = connected)
     }
 
     // ---- connection ----
@@ -275,19 +304,26 @@ class DirConLink(
                 val s = Socket()
                 s.connect(InetSocketAddress(host, port), 1_500)
                 s.tcpNoDelay = true
+                // Nothing for [readTimeoutMs] = the connection is dead (Nov 26: an SS2K's Wi-Fi dropped and came back
+                // with the socket silently dead; it took 85 s and a reset to notice). Bike data arrives every second.
+                s.soTimeout = readTimeoutMs
                 socket = s; out = s.getOutputStream()
-                haveControl = false; ergOn = false; knob = false; noErg = false; desired = null; applied = null; replies.clear()
-                for (c in listOf(INDOOR_BIKE_DATA, HEART_RATE, MACHINE_STATUS, CONTROL_POINT))
+                haveControl = false; ergOn = false; knob = false; noErg = false; applied = null; replies.clear()
+                if (!holdsAfterDisconnect) desired = null   // an SS2K keeps the wanted target: restored on this connection
+                for (c in if (readOnly) listOf(INDOOR_BIKE_DATA, HEART_RATE) else listOf(INDOOR_BIKE_DATA, HEART_RATE, MACHINE_STATUS, CONTROL_POINT))
                     send(MSG_ENABLE_NOTIFICATIONS, uuidBytes(c) + byteArrayOf(1))
-                connected = true
+                fails = 0
+                connected = true; lostAt = null
                 message = "ready"
                 log("DirCon connected to $host:$port")
                 read(DataInputStream(s.getInputStream()))
             } catch (e: IOException) {
                 if (running && connected) log("DirCon connection lost: ${e.message}")
             } finally {
+                if (connected) lostAt = clock()
                 connected = false
-                haveControl = false; ergOn = false; targetWatts = 0; desired = null; applied = null
+                haveControl = false; ergOn = false; targetWatts = 0; applied = null
+                if (!holdsAfterDisconnect) desired = null
                 if (!holdsAfterDisconnect) owed = false   // Grupetto lets go of a client that leaves; an SS2K doesn't
                 closeSocket()
             }
@@ -344,6 +380,9 @@ class DirConLink(
         val pending = inFlight || desired != applied
         if (ergOn && w > 0 && !pending && w != targetWatts && recentSent.none { it.first == w }) {
             targetWatts = w; desired = w; applied = w
+            // Echoes of our earlier writes came before this announcement on the same ordered stream: forget them, so
+            // a quick shift back to the step's target is a shift, not an echo (review: it was dropped).
+            recentSent.clear()
             recentSent.addLast(w to now)
             message = "Shift: $w W"
             log("DirCon: target changed on the bike (shift) to $w W")
@@ -418,6 +457,10 @@ class DirConLink(
         /** Retry a target that didn't go through once a second, up to [MAX_FAILS] times. */
         private const val RETRY_MS = 1_000L
         private const val MAX_FAILS = 5
+        /** No bike data for this long: the connection is dead and is reopened. */
+        const val READ_TIMEOUT_MS = 3_000
+        /** After "can't do ERG", a target is tried again this often. */
+        private const val NO_ERG_RETRY_MS = 60_000L
 
         private const val MSG_WRITE = 0x04
         private const val MSG_ENABLE_NOTIFICATIONS = 0x05

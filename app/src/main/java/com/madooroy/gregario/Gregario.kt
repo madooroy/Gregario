@@ -96,6 +96,10 @@ data class PanelState(
     val bikeNote: String? = null,
     /** Wall-clock time the ride's first second was recorded (the panel's "Start 6:46 → End 6:54"), or null before. */
     val rideStartMs: Long? = null,
+    /** The connection to the bike dropped during a workout ("Lost the SmartSpin2K · reconnecting"): amber border. */
+    val linkLost: String? = null,
+    /** SmartSpin2K riding without Grupetto's DirCon: the numbers come a second late through the SS2K. A hint, or null. */
+    val powerHint: String? = null,
 )
 
 /**
@@ -166,7 +170,24 @@ class Gregario private constructor(private val app: android.app.Application) {
     private fun newLink(b: com.madooroy.gregario.trainer.BikeChoice) =
         DirConLink(host = b.host ?: "", clock = { SystemClock.elapsedRealtime() }, log = { Timber.tag(LOG_TAG).i(it) },
             name = b.name, lookFor = b.lookFor, handBackCommand = b.handBack, holdsAfterDisconnect = b.holdsAfterDisconnect,
-            holdsThroughStops = b.holdsThroughStops, followsShifts = b.followsShifts)
+            holdsThroughStops = b.holdsThroughStops, followsShifts = b.followsShifts,
+            owedAtStart = b.holdsAfterDisconnect && b.host != null && settings.ss2kOwedHost == b.host,
+            onOwed = { owed -> settings.ss2kOwedHost = if (owed) b.host.orEmpty() else "" })
+
+    /**
+     * Where the bike's numbers come from. With a SmartSpin2K doing the ERG, power, cadence and heart rate are read
+     * straight from Grupetto on this tablet (bike data only: Grupetto is never sent a target), because the SS2K only
+     * relays Grupetto's reading a second later. Without Grupetto's DirCon, the SS2K's relay is used as before.
+     */
+    private var reader: DirConLink? = newReader(bikeChoice)
+
+    private fun newReader(b: com.madooroy.gregario.trainer.BikeChoice) =
+        if (b.kind != com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K) null
+        else DirConLink(host = "127.0.0.1", clock = { SystemClock.elapsedRealtime() }, log = { Timber.tag(LOG_TAG).i("Grupetto reader: $it") },
+            name = "Grupetto", lookFor = "switch DirCon on in Grupetto", readOnly = true)
+
+    /** When the panel was attached ([attach]), for the Grupetto-DirCon hint's grace period. */
+    private var attachedAt = 0L
 
     /** The SmartSpin2K announcing itself on the Wi-Fi right now (while the panel is up), or null. */
     private var ss2kFound: com.madooroy.gregario.trainer.DirConService? = null
@@ -236,7 +257,9 @@ class Gregario private constructor(private val app: android.app.Application) {
         val ready = session; val p = planned
         if (ready != null) { ready.releaseNow(); endRideLog(ready); session = null; planned = null }
         old.stop()                                   // hands back anything held, then closes
+        reader?.stop(); reader = newReader(bikeChoice)
         if (attached && bikeChoice.host != null) link.start()
+        if (attached) reader?.start()
         if (ready != null && p != null) {
             select(p)
             // select() can refuse (rider, FTP): then back to the list, never a Ready screen with no workout (review).
@@ -246,8 +269,8 @@ class Gregario private constructor(private val app: android.app.Application) {
         return true
     }
 
-    /** Pedaling = fresh bike sample (under 1.5 s old) with cadence above 20 rpm. */
-    private fun sample() = link.freshSample()
+    /** The newest bike numbers: from Grupetto directly when a SmartSpin2K does the ERG, else from the ERG connection. */
+    private fun sample() = reader?.freshSample() ?: link.freshSample()
     /** ERG's state for this tick's ride-file second (target, resistance, writes since the last tick). */
     /**
      * The target recorded for this second: what ERG holds, or, while it holds nothing (the knob, ERG not engaged yet),
@@ -258,8 +281,20 @@ class Gregario private constructor(private val app: android.app.Application) {
         if (target > 0) RideRecorder.Erg(target, level, 1, writes)
         else RideRecorder.Erg(s.player.snapshot().targetWatts?.let { it + s.shiftOffset } ?: 0, level, 0, writes)
     }
-    private fun pedaling() = (sample()?.cadence ?: 0f) > 20f
-    private fun heartRate() = link.heartRate()
+    private var lastPedaling = false
+    private var lastDataAt = 0L
+    /**
+     * Pedaling = a fresh bike sample (under 1.5 s old) with cadence above 20 rpm. A gap in the data (the connection
+     * dropped) is not a stop: the last answer stands for up to [DATA_GAP_MS] (Nov 26: a Wi-Fi drop read as a stop, the
+     * ride paused and needed a tap while the rider kept pedaling at 95 rpm).
+     */
+    private fun pedaling(): Boolean {
+        val s = sample(); val now = SystemClock.elapsedRealtime()
+        if (s != null) { lastPedaling = s.cadence > 20f; lastDataAt = now; return lastPedaling }
+        return lastPedaling && now - lastDataAt < DATA_GAP_MS
+    }
+    private fun heartRate() = reader?.heartRate() ?: link.heartRate()
+    private fun speedMph() = reader?.takeIf { it.freshSample() != null }?.speedMph() ?: link.speedMph()
 
     private fun today() = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
@@ -269,6 +304,8 @@ class Gregario private constructor(private val app: android.app.Application) {
         attached = true
         loadFiles()
         if (bikeChoice.host != null) link.start()   // SmartSpin2K without an address: nothing to connect to yet
+        reader?.start()
+        attachedAt = SystemClock.elapsedRealtime()
         ss2kFinder.start()
         publishBike()
         startLoop()
@@ -301,6 +338,7 @@ class Gregario private constructor(private val app: android.app.Application) {
         session = null; planned = null
         mutableState.update { it.copy(workout = null, snap = null, stats = null, alert = null, autoStartArmed = false) }
         link.stop()   // hands the bike back (Reset, or neutral simulation on an SS2K), then closes DirCon
+        reader?.stop()
         ss2kFinder.stop(); ss2kOfferDismissed = false
     }
 
@@ -660,10 +698,13 @@ class Gregario private constructor(private val app: android.app.Application) {
     }
 
     private fun tickNow() {
+        // After the loop failed (review): the panel's buttons must not tick a broken session and crash the app.
+        if (loop?.isActive != true) return
         val s = session ?: return
         val now = SystemClock.elapsedRealtime()
         val smp = sample()
-        s.tick(now, pedaling(), smp?.power ?: 0f, smp?.cadence ?: 0f, heartRate()?.toFloat(), wallBase + now, link.speedMph(), smp?.resistance, ergNow(s))
+        s.tick(now, pedaling(), smp?.power ?: 0f, smp?.cadence ?: 0f, heartRate()?.toFloat(), wallBase + now, speedMph(), smp?.resistance, ergNow(s),
+            dataOk = smp != null)
         afterTick(s)
         publish()
     }
@@ -735,8 +776,15 @@ class Gregario private constructor(private val app: android.app.Application) {
             while (isActive) {
                 updateLive()
                 val note = if (link.connected) null else linkStatus()
+                // Lost mid-workout (it was connected): the panel's amber border until it is back.
+                val lost = if (session != null && !link.connected && link.lostAt != null) "Lost the ${bikeChoice.name} · reconnecting" else null
+                val hint = reader?.let { rd ->
+                    if (!rd.connected && SystemClock.elapsedRealtime() - attachedAt > HINT_GRACE_MS)
+                        "Switch DirCon on in Grupetto: power then comes straight from Grupetto, a second sooner" else null
+                }
                 mutableState.update {
-                    val st = if (it.bikeLink == note) it else it.copy(bikeLink = note)
+                    val st0 = if (it.bikeLink == note) it else it.copy(bikeLink = note)
+                    val st = if (st0.linkLost == lost && st0.powerHint == hint) st0 else st0.copy(linkLost = lost, powerHint = hint)
                     if (session == null || (st.livePower == live.power && st.liveCadence == live.cadence && st.liveResistance == live.resistance)) st
                     else st.copy(livePower = live.power, liveCadence = live.cadence, liveResistance = live.resistance)
                 }
@@ -765,7 +813,7 @@ class Gregario private constructor(private val app: android.app.Application) {
                         val smp = sample()
                         val now = SystemClock.elapsedRealtime()
                         s.tick(now, pedaling(), smp?.power ?: 0f, smp?.cadence ?: 0f,
-                            heartRate()?.toFloat(), wallBase + now, link.speedMph(), smp?.resistance, ergNow(s))
+                            heartRate()?.toFloat(), wallBase + now, speedMph(), smp?.resistance, ergNow(s), dataOk = smp != null)
                         afterTick(s)
                         publish()
                     }
@@ -795,6 +843,10 @@ class Gregario private constructor(private val app: android.app.Application) {
         private const val AUTO_START_MS = 10 * 60_000L
         /** How often the live POWER / CADENCE / RES numbers refresh (the bike is read every 200 ms). */
         private const val LIVE_REFRESH_MS = 250L
+        /** A gap in the bike data shorter than this is not a stop (see [pedaling]). */
+        private const val DATA_GAP_MS = 60_000L
+        /** How long the Grupetto reader may take to connect before the DirCon hint shows. */
+        private const val HINT_GRACE_MS = 10_000L
         /** PlannedWorkout id prefix for workout files. */
         private const val FILE_ID = "file:"
         private const val PICK_RIDER = "Who's riding? Pick a rider first"
