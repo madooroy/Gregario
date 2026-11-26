@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        canDraw = Settings.canDrawOverlays(this)
+        canDraw = canDrawOverlays(this)
     }
 
     @Composable
@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openPanel() {
-        if (!Settings.canDrawOverlays(this)) { askToDraw(); return }
+        if (!canDrawOverlays(this)) { askToDraw(); return }
         PanelService.open(this)
     }
 

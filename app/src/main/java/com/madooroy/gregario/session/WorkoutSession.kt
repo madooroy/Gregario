@@ -201,7 +201,7 @@ class WorkoutSession(workout: Workout, ftp: Int, private val bike: ErgSink, priv
                 // It belongs to the step the held target was sent for: in a climb's lead second, the coming step.
                 if (sentStep != offsetStep) { offsetStep = sentStep; offset = 0 }
                 offset += st.targetWatts - sentWatts!!; sentWatts = st.targetWatts
-                notice = "Shift: your target until this step ends · ERG goes on with the next step"; shiftNotice = true
+                notice = "Shifters: your target until this step ends · ERG back for the next step"; shiftNotice = true
             }
         }
 

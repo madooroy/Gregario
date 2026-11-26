@@ -100,7 +100,12 @@ data class PanelState(
     val linkLost: String? = null,
     /** SmartSpin2K riding without Grupetto's DirCon: the numbers come a second late through the SS2K. A hint, or null. */
     val powerHint: String? = null,
+    /** No bike answering (or an SS2K with no power): the startup card saying what to do, or null once it works. */
+    val bikeHelp: BikeHelp? = null,
 )
+
+/** The "No bike found" card: a title, what to do, and Open Grupetto when that is the fix. */
+data class BikeHelp(val title: String, val body: String, val openGrupetto: Boolean = false)
 
 /**
  * One per app: loads today's workout from intervals.icu and runs it on the bike through Grupetto's DirCon
@@ -258,6 +263,7 @@ class Gregario private constructor(private val app: android.app.Application) {
         if (ready != null) { ready.releaseNow(); endRideLog(ready); session = null; planned = null }
         old.stop()                                   // hands back anything held, then closes
         reader?.stop(); reader = newReader(bikeChoice)
+        attachedAt = SystemClock.elapsedRealtime()   // the hints and the "No bike found" card wait 10 s for the new bike too
         if (attached && bikeChoice.host != null) link.start()
         if (attached) reader?.start()
         if (ready != null && p != null) {
@@ -400,8 +406,14 @@ class Gregario private constructor(private val app: android.app.Application) {
                         message = "Couldn't reach intervals.icu (${e.message})" + if (last != null) " · last workout available" else "",
                         today = if (last != null) listOf(PlannedWorkout("last", last.name, "", last, json)) else emptyList())
                 }
-                val wait = minOf(REFRESH_RETRY_MS shl minOf(refreshFailures, 5), REFRESH_RETRY_MAX_MS); refreshFailures++
-                refreshRetry = scope.launch { kotlinx.coroutines.delay(wait); if (session == null) refresh() }
+                // A refused sign-in won't fix itself: no retries (they'd just be refused again), say what to do instead.
+                val refused = e is com.madooroy.gregario.icu.IcuException && e.code in setOf(401, 403)
+                if (refused) mutableState.update { it.copy(message = "intervals.icu refused the sign-in: connect again in Gregario's settings" +
+                    if (it.today.isNotEmpty()) " · last workout available" else "") }
+                else {
+                    val wait = minOf(REFRESH_RETRY_MS shl minOf(refreshFailures, 5), REFRESH_RETRY_MAX_MS); refreshFailures++
+                    refreshRetry = scope.launch { kotlinx.coroutines.delay(wait); if (session == null) refresh() }
+                }
             }
         }
     }
@@ -533,8 +545,38 @@ class Gregario private constructor(private val app: android.app.Application) {
         savedRideId = rideId(s)
         scope.launch {
             val ok = job.await()
-            mutableState.update { it.copy(uploadStatus = if (ok) "Uploading…" else "Couldn't save the ride") }
-            if (ok) processUploads()
+            val target = canUpload()
+            mutableState.update { it.copy(uploadStatus = if (!ok) "Couldn't save the ride" else if (target) "Uploading…"
+                else "Saved on this tablet: it uploads once intervals.icu or Strava is connected (Settings). Share the file to keep a copy now.") }
+            if (ok && target) processUploads()
+        }
+    }
+
+    /** Somewhere for this rider's rides to go: intervals.icu or Strava. Without, a ride waits on the tablet. */
+    private fun canUpload() = settings.icuCredential().isNotBlank() || stravaAccount.configured
+
+    /**
+     * Finish screen: send the ride's .fit to any app on the tablet (Drive, email, Files…), for a rider with nothing
+     * connected, or anyone who wants the file (review: rides with no upload target had nowhere to go).
+     */
+    fun shareRide() {
+        val s = session ?: return
+        runCatching {
+            val dir = java.io.File(app.cacheDir, "share").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+            val safe = rideName(s).replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().ifEmpty { "Gregario ride" }.take(60)
+            val f = java.io.File(dir, "$safe.fit").apply { writeBytes(s.recorder.fit()) }
+            val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.share", f)
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("application/octet-stream")
+                .putExtra(android.content.Intent.EXTRA_STREAM, uri).putExtra(android.content.Intent.EXTRA_SUBJECT, safe)
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val chooser = android.content.Intent.createChooser(send, "Share ride file")
+            // Not to Gregario itself (it opens workout files, not rides).
+            if (android.os.Build.VERSION.SDK_INT >= 24) chooser.putExtra(android.content.Intent.EXTRA_EXCLUDE_COMPONENTS,
+                arrayOf(android.content.ComponentName(app, com.madooroy.gregario.ui.ImportWorkoutActivity::class.java)))
+            app.startActivity(chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }.onFailure { e ->
+            Timber.tag(LOG_TAG).w(e, "Gregario: ride not shared")
+            mutableState.update { it.copy(uploadStatus = "No app here to share the ride file with") }
         }
     }
 
@@ -612,7 +654,7 @@ class Gregario private constructor(private val app: android.app.Application) {
                 val waiting = rides.filter { it.waiting }
                 mutableState.update { st ->
                     st.copy(
-                        uploadStatus = mine?.let { r ->
+                        uploadStatus = mine?.takeIf { canUpload() }?.let { r ->
                             listOfNotNull(
                                 if (r.icu == UploadQueue.NO_ICU) null else if (r.icuDone) "intervals.icu ✓" else if (r.icuFailed) "intervals.icu ✗" else "intervals.icu waiting",
                                 if (r.stravaDone) "Strava ✓" else if (r.stravaFailed) null else "Strava waiting",
@@ -782,14 +824,78 @@ class Gregario private constructor(private val app: android.app.Application) {
                     if (!rd.connected && SystemClock.elapsedRealtime() - attachedAt > HINT_GRACE_MS)
                         "Switch DirCon on in Grupetto: power then comes straight from Grupetto, a second sooner" else null
                 }
+                val help = bikeHelp(lost != null)
                 mutableState.update {
                     val st0 = if (it.bikeLink == note) it else it.copy(bikeLink = note)
-                    val st = if (st0.linkLost == lost && st0.powerHint == hint) st0 else st0.copy(linkLost = lost, powerHint = hint)
+                    val st1 = if (st0.linkLost == lost && st0.powerHint == hint) st0 else st0.copy(linkLost = lost, powerHint = hint)
+                    val st = if (st1.bikeHelp == help) st1 else st1.copy(bikeHelp = help)
                     if (session == null || (st.livePower == live.power && st.liveCadence == live.cadence && st.liveResistance == live.resistance)) st
                     else st.copy(livePower = live.power, liveCadence = live.cadence, liveResistance = live.resistance)
                 }
                 delay(LIVE_REFRESH_MS)
             }
+        }
+    }
+
+    // ---- The "No bike found" card ----
+
+    private var grupettoCheckedAt = 0L
+    private var grupettoInstalled = true
+    private var powerSeenAt = 0L
+    private var linkUpAt = 0L
+
+    /** Grupetto installed? Asked every few seconds at most (the rider may be installing it now). */
+    private fun grupettoInstalled(now: Long): Boolean {
+        if (now - grupettoCheckedAt > GRUPETTO_CHECK_MS) {
+            grupettoCheckedAt = now
+            grupettoInstalled = runCatching { app.packageManager.getLaunchIntentForPackage(GRUPETTO_PACKAGE) != null }.getOrDefault(true)
+        }
+        return grupettoInstalled
+    }
+
+    /** Open Grupetto (the card's button), so the rider can switch DirCon on. */
+    fun openGrupetto() {
+        runCatching {
+            app.packageManager.getLaunchIntentForPackage(GRUPETTO_PACKAGE)?.let {
+                app.startActivity(it.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }.onFailure { Timber.tag(LOG_TAG).w(it, "Gregario: could not open Grupetto") }
+    }
+
+    /**
+     * What the card says, checked in order: Grupetto missing (it is always needed: it is the only thing that reads the
+     * Peloton), Grupetto not answering, the SmartSpin2K not answering, an SS2K with no power. Nothing in the first
+     * 10 s after the panel opens or the bike drops (it usually just connects), and nothing mid-ride while the amber
+     * "Lost" border says it already.
+     */
+    private fun bikeHelp(lostMidRide: Boolean): BikeHelp? {
+        val now = SystemClock.elapsedRealtime()
+        val ss2k = bikeChoice.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K
+        if (link.connected) {
+            if (linkUpAt == 0L) linkUpAt = now
+            if ((sample()?.power ?: 0f) > 0f) powerSeenAt = now
+            // SS2K gets its power from Grupetto's Bluetooth: none at all since it connected means Grupetto isn't sending.
+            // Before a ride only (stopped mid-ride reads 0 too), and only when the power isn't coming from Grupetto itself.
+            val beforeRide = session.let { it == null || it.player.state == WorkoutPlayer.State.Ready }
+            return if (ss2k && beforeRide && reader?.connected != true && powerSeenAt < linkUpAt && now - linkUpAt > NO_POWER_MS)
+                BikeHelp("SmartSpin2K: no power yet", "Pedal a few strokes. Still 0 W? Check Grupetto is running with Bluetooth on: " +
+                    "the SmartSpin2K gets its power from Grupetto.", openGrupetto = grupettoInstalled(now))
+            else null
+        }
+        linkUpAt = 0L
+        if (lostMidRide) return null
+        val since = maxOf(attachedAt, link.lostAt ?: 0L)
+        if (now - since < HINT_GRACE_MS) return null
+        if (!grupettoInstalled(now))
+            return BikeHelp("Gregario needs Grupetto", "Grupetto reads the Peloton and passes it to Gregario. Install it on this " +
+                "tablet (github.com/doudar/grupetto), then switch DirCon on in its settings.")
+        return when {
+            !ss2k -> BikeHelp("Grupetto isn't answering", "Open Grupetto and switch DirCon on in its settings. Gregario keeps trying " +
+                "and connects by itself.", openGrupetto = true)
+            bikeChoice.host == null -> BikeHelp("SmartSpin2K: no address", "Type its address in Gregario's settings, or switch it on " +
+                "so Gregario finds it on the Wi-Fi.")
+            else -> BikeHelp("SmartSpin2K isn't answering", "Check it's on and on this Wi-Fi (${bikeChoice.ss2kHost}). Gregario keeps " +
+                "trying and connects by itself.")
         }
     }
 
@@ -847,6 +953,10 @@ class Gregario private constructor(private val app: android.app.Application) {
         private const val DATA_GAP_MS = 60_000L
         /** How long the Grupetto reader may take to connect before the DirCon hint shows. */
         private const val HINT_GRACE_MS = 10_000L
+        private const val NO_POWER_MS = 15_000L
+        private const val GRUPETTO_CHECK_MS = 5_000L
+        /** Grupetto's package (seliapop's original id, kept by doudar's Grupetto). */
+        const val GRUPETTO_PACKAGE = "com.spop.poverlay"
         /** PlannedWorkout id prefix for workout files. */
         private const val FILE_ID = "file:"
         private const val PICK_RIDER = "Who's riding? Pick a rider first"

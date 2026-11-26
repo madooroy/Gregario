@@ -153,6 +153,10 @@ class AppSettings(context: Context) : com.madooroy.gregario.upload.StravaStore {
     private val mutablePanelScale = MutableStateFlow(prefs.getInt("panelScale", 125))
     val panelScale: StateFlow<Int> = mutablePanelScale
     fun setPanelScale(p: Int) { prefs.edit().putInt("panelScale", p).apply(); mutablePanelScale.value = p }
+    /** How solid the panel's surfaces are (100, 85, 70 or 55 %); text, numbers, lines and borders stay solid. */
+    private val mutablePanelOpacity = MutableStateFlow(prefs.getInt("panelOpacity", 100))
+    val panelOpacity: StateFlow<Int> = mutablePanelOpacity
+    fun setPanelOpacity(p: Int) { prefs.edit().putInt("panelOpacity", p).apply(); mutablePanelOpacity.value = p }
 
     /** Climb look-ahead in seconds (0, 1 or 2): harder targets go to the bike this early. Default 1 = on the "1". */
     private val mutableClimbLead = MutableStateFlow(prefs.getInt("climbLead", 1))

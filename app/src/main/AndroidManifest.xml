@@ -13,6 +13,11 @@
     <!-- "Start on boot" (main screen): open the panel when the tablet starts. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Android 11+: lets Gregario see whether Grupetto is installed, and open it (the "No bike found" card). -->
+    <queries>
+        <package android:name="com.spop.poverlay" />
+    </queries>
+
     <application
         android:name="com.madooroy.gregario.GregarioApp"
         android:allowBackup="false"
@@ -60,7 +65,10 @@
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
+                <!-- Files and text only (was */*: Gregario was offered for photos and videos too). Any file type,
+                     since mail and Drive name .zwo/.mrc/.erg files differently. -->
+                <data android:mimeType="application/*" />
+                <data android:mimeType="text/*" />
             </intent-filter>
         </activity>
 
@@ -80,6 +88,16 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- "Share ride file" on the finish screen: the ride's .fit, lent to the chosen app (read only, this file only). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/share_paths" />
+        </provider>
     </application>
 
 </manifest>

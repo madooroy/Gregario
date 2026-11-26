@@ -32,7 +32,7 @@ enum class BootStart {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (BootStart.decide(intent.action, AppSettings.startOnBootSet(context),
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context))) {
+                canDrawOverlays(context))) {
             BootStart.OpenPanel -> runCatching { PanelService.open(context) }
                 .onSuccess { Timber.i("Gregario boot: panel opened") }
                 .onFailure { Timber.w(it, "Gregario boot: panel not opened") }

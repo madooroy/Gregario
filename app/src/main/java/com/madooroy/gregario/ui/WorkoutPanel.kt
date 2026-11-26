@@ -38,17 +38,22 @@ import com.madooroy.gregario.workout.watts
 import kotlin.math.roundToInt
 
 // Gregario's colours (from its icon): deep navy, gold for the target, light blue for power.
-private val Bg = Color(0xFF1B2430)   // opaque: Peloton's screen text showed through
-private val Card = Color(0xFF11161D)
+// Surfaces fade with the Opacity setting (100/85/70/55 %); text, numbers, chart lines and borders stay solid.
+// A state, so every part of the panel that draws a surface redraws when the setting changes.
+private var surface by mutableStateOf(1f)
+private val Bg: Color get() = Color(0xFF1B2430).copy(alpha = surface)
+private val Card: Color get() = Color(0xFF11161D).copy(alpha = surface)
 private val Line = Color(0xFF2A3646)
 private val Fg = Color(0xFFE8EEF5)
 private val Dim = Color(0xFF9EAEC0)
-private val NoteBg = Color(0xFF243042)
+private val NoteBg: Color get() = Color(0xFF243042).copy(alpha = surface)
 private val NoteFg = Color(0xFFCFE0FF)
-private val AlertBg = Color(0xFF3A1E24)
+private val AlertBg: Color get() = Color(0xFF3A1E24).copy(alpha = surface)
 private val AlertFg = Color(0xFFFFC9D2)
 private val Accent = Color(0xFFF5C542)   // gold: the target
 private val Blue = Color(0xFF4FC3F7)     // power, and the interval ring
+private val InRange = Color(0xFF5FD17E)  // green: live power inside a range step
+private val LostAmber = Color(0xFFFFA000) // the bike link is down (thicker than the 3-2-1 border, with a message)
 
 private fun zoneColor(pct: Double) = if (pct.isNaN()) Dim else Color(Zone.of(pct).argb)
 private fun mmss(s: Int) = "${s / 60}:${"%02d".format(s % 60)}"
@@ -65,15 +70,30 @@ fun GregarioPanel(gregario: Gregario, onDrag: (Float, Float) -> Unit, onDragEnd:
     // 1 dp = 1 screen pixel inside the panel, so sizes match the mockup on the Bike+ whatever its density.
     // The panel is laid out in Bike+ pixels (280 x 640 at 100%) and scaled as a whole by the Panel size setting.
     val scale by gregario.settings.panelScale.collectAsState()
-    CompositionLocalProvider(LocalDensity provides Density(scale / 100f, scale / 100f)) {
+    val opacity by gregario.settings.panelOpacity.collectAsState()
+    surface = opacity.coerceIn(40, 100) / 100f
+    // See-through panel: a faint dark edge keeps text readable over Peloton's screen.
+    val textStyle = if (opacity < 100) androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(
+        Color.Black.copy(alpha = if (opacity <= 70) .8f else .5f), Offset(0f, 1f), 3f)) else androidx.compose.ui.text.TextStyle.Default
+    CompositionLocalProvider(LocalDensity provides Density(scale / 100f, scale / 100f),
+        androidx.compose.material.LocalTextStyle provides textStyle) {
         val riding = state.workout != null && state.snap != null && state.snap!!.state != WorkoutPlayer.State.Finished
         // In the 3-2-1 before a step change the whole border flashes in the next step's zone colour.
         val change = state.snap?.changeIn
-        val edge = if (change != null && change % 2 == 1 && state.ftp > 0)
-            zoneColor((state.snap?.nextWatts ?: 0) * 100.0 / state.ftp) else Line
+        // Lost the bike: a thicker amber border, on and off each second, with the message at the top. It wins over the
+        // 3-2-1 (no target reaches the bike anyway until it's back).
+        val lost = riding && state.linkLost != null
+        // Its own 1 s timer: a paused ride doesn't redraw the panel each second.
+        var blink by remember { mutableStateOf(true) }
+        LaunchedEffect(lost) { blink = true; while (lost) { kotlinx.coroutines.delay(1000); blink = !blink } }
+        val edge = when {
+            lost -> if (blink) LostAmber else Line
+            change != null && change % 2 == 1 && state.ftp > 0 -> zoneColor((state.snap?.nextWatts ?: 0) * 100.0 / state.ftp)
+            else -> Line
+        }
         Column(
             Modifier.width(280.dp).background(Bg, RoundedCornerShape(if (compact && riding) 18.dp else 22.dp))
-                .border(if (edge == Line) 1.dp else 4.dp, edge, RoundedCornerShape(if (compact && riding) 18.dp else 22.dp))
+                .border(if (edge == Line) 1.dp else if (lost) 6.dp else 4.dp, edge, RoundedCornerShape(if (compact && riding) 18.dp else 22.dp))
                 .padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(if (compact && riding) 6.dp else 10.dp)
         ) {
@@ -87,7 +107,7 @@ fun GregarioPanel(gregario: Gregario, onDrag: (Float, Float) -> Unit, onDragEnd:
             when {
                 state.workout == null && compact -> Text(
                     (if (gregario.settings.riders.value.size > 1) (if (gregario.needsRider()) "Who's riding? Tap to expand · " else "${gregario.settings.riderName} · ") else "") +
-                    (state.today.firstOrNull()?.let { "Today: ${it.name} · ${it.workout.totalSeconds / 60} min" } ?: (state.message ?: "Gregario")),
+                    (state.bikeHelp?.let { "${it.title} · tap to expand" } ?: state.today.firstOrNull()?.let { "Today: ${it.name} · ${it.workout.totalSeconds / 60} min" } ?: (state.message ?: "Gregario")),
                     fontSize = 12.sp, color = Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 state.workout == null -> TodayList(gregario, state)
                 state.snap?.state == WorkoutPlayer.State.Finished -> Finished(gregario, state)
@@ -172,6 +192,22 @@ private fun Pill(text: String, onClick: () -> Unit, modifier: Modifier = Modifie
 private fun Alert(t: String) = Text(t, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AlertFg,
     modifier = Modifier.fillMaxWidth().background(AlertBg, RoundedCornerShape(9.dp)).padding(horizontal = 10.dp, vertical = 7.dp))
 
+/** "No bike found": what's wrong and what to do, with Open Grupetto when that's the fix. Gone once the bike answers. */
+@Composable
+private fun BikeHelpCard(gregario: Gregario, h: com.madooroy.gregario.BikeHelp) {
+    Column(Modifier.fillMaxWidth().background(AlertBg, RoundedCornerShape(12.dp)).border(1.dp, LostAmber.copy(alpha = .6f), RoundedCornerShape(12.dp))
+        .padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(h.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Fg)
+        Text(h.body, fontSize = 12.sp, color = AlertFg)
+        if (h.openGrupetto) Pill("Open Grupetto", { gregario.openGrupetto() }, Modifier.fillMaxWidth())
+    }
+}
+
+@Composable
+private fun LinkLost(t: String, small: Boolean = false) = Text(t, fontSize = if (small) 12.sp else 13.sp, fontWeight = FontWeight.SemiBold,
+    color = Color(0xFF1A1200), maxLines = 2, overflow = TextOverflow.Ellipsis,
+    modifier = Modifier.fillMaxWidth().background(LostAmber, RoundedCornerShape(9.dp)).padding(horizontal = 10.dp, vertical = if (small) 4.dp else 7.dp))
+
 /** A button that needs a second tap within 3 s (for End). */
 @Composable
 private fun ConfirmPill(text: String, confirm: String, onConfirm: () -> Unit, modifier: Modifier = Modifier) {
@@ -242,8 +278,8 @@ private fun TodayList(gregario: Gregario, s: PanelState) {
             }
         }, Modifier.padding(start = 6.dp), pad = 10.dp)
     }
-    // Gregario rides through Grupetto's DirCon: say so plainly when Grupetto isn't there.
-    s.bikeLink?.let { Text(it, fontSize = 12.sp, color = NoteFg) }
+    // Gregario rides through Grupetto's DirCon: say so plainly when Grupetto isn't there (the card, once 10 s have gone).
+    s.bikeHelp?.let { BikeHelpCard(gregario, it) } ?: s.bikeLink?.let { Text(it, fontSize = 12.sp, color = NoteFg) }
     s.message?.let { Text(it, fontSize = 12.sp, color = Dim) }
     for (p in s.today) WorkoutCard(gregario, p)
     // Workout files opened with Gregario (Open with / Share from email, Drive, downloads).
@@ -293,6 +329,7 @@ private fun Full(gregario: Gregario, s: PanelState) {
             else -> Pill("Pause", { gregario.pause() }, pw, pad = 4.dp)
         }
     }
+    s.linkLost?.let { LinkLost(it) }
     s.alert?.let { Alert(it) }
     s.notice?.let { Notice(it) }
     ChangeFlash(s)
@@ -320,6 +357,7 @@ private fun wattsSize(w: Int?) = if (w != null && w >= 1000) 25.sp else 30.sp
 private fun UnitW() = Text(" W", fontSize = 14.sp, color = Dim, maxLines = 1, softWrap = false, modifier = Modifier.padding(bottom = 3.dp))
 
 /** Gap between the Target and Now columns. */
+private const val NOTE_SECONDS = 10
 private val COL_GAP = 8.dp   // 12 cut "60–70% FTP" to "60–70% FT" (Nov 25 ride)
 
 /** Start / Pause / Resume: a third of the 252-wide action row less its two 6-dp gaps. */
@@ -435,7 +473,9 @@ private fun RideTop(gregario: Gregario, s: PanelState) {
             Text(if (s.autoStartArmed) "Pedal easy: ERG holds ${snap.targetWatts ?: "–"} W · tap Start when ready · FTP ${s.ftp} W"
                  else "Tap Start to begin · FTP ${s.ftp} W", fontSize = 13.sp, color = NoteFg)
             // No Grupetto DirCon yet: say so (the workout can't hold a target before).
-            s.bikeLink?.let { Text(it, fontSize = 12.sp, color = NoteFg) }
+            s.bikeHelp?.let { BikeHelpCard(gregario, it) } ?: s.bikeLink?.let { Text(it, fontSize = 12.sp, color = NoteFg) }
+            // Beside an SS2K: power is read from Grupetto itself when its DirCon is on (a second sooner than via the SS2K).
+            s.powerHint?.let { Text(it, fontSize = 11.sp, color = Dim) }
             Pill("Cancel", { gregario.close() }, Modifier.fillMaxWidth())
         }
         WorkoutPlayer.State.Countdown -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -472,45 +512,63 @@ private fun RideTop(gregario: Gregario, s: PanelState) {
         // then the watt range. All left-aligned, with room around the ring and between the columns; each row is its own Row, so the pairs line up.
         val ftp = s.workoutFtp.takeIf { it > 0 } ?: s.ftp
         val tw = Modifier.weight(1f); val nw = Modifier.weight(1f)
+        // Three ways to ride a step: ERG holds the target; the Knob and the Shifters hand it to the rider. With the knob or
+        // the shifters the big number gives way to the word (Marc, Nov 26: "Knob is clearly where target watts should be"),
+        // and the line under it says what to aim for: the shifted target, or the step's range in watts.
+        val shifting = s.shiftOffset != 0 && !s.riderControl
+        val target = snap.targetWatts?.let { it + s.shiftOffset }
+        val range = if (top != null && !pct.isNaN()) watts(pct, s.workoutFtp)?.let { lo ->
+            watts(ridden(top, snap.intensityPct), s.workoutFtp)?.let { hi -> lo to hi } } else null
+        val inRange = range != null && s.livePower != null && s.livePower in range.first..range.second
         Column(Modifier.weight(1f)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(COL_GAP)) {
-                // A shift with the shifters shows on the label ("Shift +10", like the knob's own mode): the % line has no room for it.
-                // On the knob: "Knob · range" when the step has a range to aim for, else just Target (the number reads Knob).
-                Text(if (s.riderControl && top != null) "Knob · range" else if (pct.isNaN()) "Ride free"
-                     else if (s.shiftOffset != 0 && !s.riderControl) "Shift ${"%+d".format(s.shiftOffset)}" else "Target", fontSize = 12.sp,
-                    color = Dim, maxLines = 1, softWrap = false, textAlign = TextAlign.Start, modifier = tw)
+                Text(when {
+                    pct.isNaN() -> "Ride free"
+                    s.riderControl && range != null -> "Knob · range"
+                    shifting && range != null -> "Shift · range"
+                    else -> "Target"
+                }, fontSize = 12.sp, color = Dim, maxLines = 1, softWrap = false, textAlign = TextAlign.Start, modifier = tw)
                 Text("Now", fontSize = 12.sp, color = Dim, maxLines = 1, textAlign = TextAlign.Start, modifier = nw)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(COL_GAP)) {
                 Row(tw, horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.Bottom) {
-                    val target = snap.targetWatts?.let { it + s.shiftOffset }
-                    Big(if (s.riderControl) "Knob" else "${target ?: "–"}", Accent,
-                        if (s.riderControl) 26.sp else wattsSize(target))
-                    if (!s.riderControl && target != null) UnitW()
+                    when {
+                        s.riderControl -> Big("Knob", Accent, 26.sp)
+                        shifting -> Big("Shifters", Accent, 20.sp)
+                        else -> { Big("${target ?: "–"}", Accent, wattsSize(target)); if (target != null) UnitW() }
+                    }
                 }
                 Row(nw, horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.Bottom) {
-                    Big("${s.livePower ?: "–"}", Blue, wattsSize(s.livePower))
+                    // Inside the step's range the live watts turn green: on target.
+                    Big("${s.livePower ?: "–"}", if (inRange) InRange else Blue, wattsSize(s.livePower))
                     UnitW()
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(COL_GAP)) {
-                Text(when {
-                    pct.isNaN() -> "free"
-                    top != null -> "${pct.roundToInt()}–${ridden(top, snap.intensityPct).roundToInt()}% FTP"
-                    else -> "${pct.roundToInt()}% FTP"
-                },
-                    fontSize = 11.sp, color = Dim, maxLines = 1, softWrap = false, textAlign = TextAlign.Start, modifier = tw)
+                val (line, bright) = when {
+                    pct.isNaN() -> "free" to false
+                    // Shifters: the ERG target with the shift, bright, since it's what the rider holds now.
+                    shifting && range != null -> "ERG $target · ${"%+d".format(s.shiftOffset)}" to false   // "W" left out: 11 sp in a 79 dp column
+                    shifting -> "$target W · ${"%+d".format(s.shiftOffset)}" to true
+                    top != null -> "${pct.roundToInt()}–${ridden(top, snap.intensityPct).roundToInt()}% FTP" to false
+                    else -> "${pct.roundToInt()}% FTP" to false
+                }
+                Text(line, fontSize = 11.sp, fontWeight = if (bright) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (bright) Fg else Dim, maxLines = 1, softWrap = false, textAlign = TextAlign.Start, modifier = tw)
                 Text(s.livePower?.takeIf { ftp > 0 }?.let { "${(it * 100.0 / ftp).roundToInt()}% FTP" } ?: "",
                     fontSize = 11.sp, color = Dim, maxLines = 1, softWrap = false, textAlign = TextAlign.Start, modifier = nw)
             }
-            // A range step ("60–70% FTP") gives its watts too, so the rider on the knob knows what to aim for.
+            // A range step ("60–70% FTP") gives its watts too, so the rider on the knob or shifters knows what to aim for.
             // It may run on under the Now column (empty on this line): "197–230 W" was cut to "197–230 V" (Nov 25 ride).
-            if (top != null && !pct.isNaN())
-                Text("${watts(pct, s.workoutFtp)}–${watts(ridden(top, snap.intensityPct), s.workoutFtp)} W",
-                    // Dim like the % line under ERG; bright on the knob, where it's what the rider aims for.
-                    // The % line's size (Marc, Nov 25): 13 sp semibold was cut to "197–230 V".
-                    fontSize = 11.sp, color = if (s.riderControl) Fg else Dim, maxLines = 1, softWrap = false,
+            if (range != null) {
+                Text("${range.first}–${range.second} W",
+                    // Dim like the % line under ERG; bright on the knob or shifters, where it's what the rider aims for.
+                    fontSize = 11.sp, fontWeight = if (s.riderControl || shifting) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (s.riderControl || shifting) Fg else Dim, maxLines = 1, softWrap = false,
                     textAlign = TextAlign.Start, modifier = Modifier.fillMaxWidth())
+                RangeBar(range.first, range.second, s.livePower, if (shifting) target else null,
+                    Modifier.fillMaxWidth().padding(top = 3.dp).height(8.dp))
+            }
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -518,9 +576,30 @@ private fun RideTop(gregario: Gregario, s: PanelState) {
         LivePill(TraceCad, "${s.liveCadence ?: "–"} rpm", Modifier.weight(1f))
         LivePill(Dim, "Res ${s.liveResistance ?: "–"}", Modifier.weight(1f))
     }
-    snap.note?.let {
+    // A step's note shows for its first 10 s and then for the first 10 s of each ride minute, so most of the time the
+    // panel is clear (Marc, Nov 26: pictures without test notes; a reminder each minute is enough).
+    val intoStep = (step?.seconds ?: 0) - snap.stepRemaining
+    snap.note?.takeIf { intoStep < NOTE_SECONDS || snap.elapsed % 60 < NOTE_SECONDS }?.let {
         Text(it, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = NoteFg,
             modifier = Modifier.fillMaxWidth().background(NoteBg, RoundedCornerShape(9.dp)).padding(horizontal = 10.dp, vertical = 7.dp))
+    }
+}
+
+/**
+ * A range step at a glance: the green band is the range, the white mark is the live power, and in Shifters mode the
+ * gold tick is the shifted ERG target. The bar shows half the range again (at least 20 W) on each side.
+ */
+@Composable
+private fun RangeBar(lo: Int, hi: Int, now: Int?, erg: Int?, modifier: Modifier) {
+    Canvas(modifier) {
+        val pad = maxOf((hi - lo) / 2.0, 20.0)
+        val min = lo - pad; val max = hi + pad
+        fun x(w: Double) = (((w - min) / (max - min)).coerceIn(0.0, 1.0) * size.width).toFloat()
+        val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
+        drawRoundRect(Line, cornerRadius = r)
+        drawRoundRect(InRange.copy(alpha = .55f), Offset(x(lo.toDouble()), 0f), Size(x(hi.toDouble()) - x(lo.toDouble()), size.height), r)
+        erg?.let { val ex = x(it.toDouble()); drawRect(Accent, Offset(ex - 1.5f, -2f), Size(3f, size.height + 4f)) }
+        now?.let { val nx = x(it.toDouble()); drawRect(Color.White, Offset(nx - 2f, -3f), Size(4f, size.height + 6f)) }
     }
 }
 
@@ -636,7 +715,7 @@ private fun DetailsBottom(s: PanelState) {
 private fun IntensityRow(gregario: Gregario, intensityPct: Int) {
     // Easier / Harder: the whole workout down or up by 1%, with where it stands in the middle.
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TintPill("Easier", Color(0xFF1E3A2B), TraceCad, { gregario.changeIntensity(-1) }, Modifier.weight(1f))
+        TintPill("Easier", Color(0xFF1E3A2B).copy(alpha = surface), TraceCad, { gregario.changeIntensity(-1) }, Modifier.weight(1f))
         Text("$intensityPct%", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Fg, textAlign = TextAlign.Center,
             modifier = Modifier.width(64.dp))
         TintPill("Harder", AlertBg, TraceHr, { gregario.changeIntensity(+1) }, Modifier.weight(1f))
@@ -674,6 +753,7 @@ private fun ChangeFlash(s: PanelState, big: Boolean = true) {
 @Composable
 private fun Compact(gregario: Gregario, s: PanelState) {
     val w = s.workout!!; val snap = s.snap!!
+    s.linkLost?.let { LinkLost(it, small = true) }
     ChangeFlash(s, big = false)
     // Anything that needs a decision shows here too, with its button.
     when (snap.state) {
@@ -753,6 +833,9 @@ private fun Finished(gregario: Gregario, s: PanelState) {
         ConfirmPill("Discard ride", "Tap again to discard", { gregario.discardRide() }, Modifier.fillMaxWidth())
     } else {
         s.uploadStatus?.let { Text(it, fontSize = 13.sp, color = NoteFg) }
+        // The ride's .fit to Drive, email or Files: for a rider with nothing connected, or anyone who wants the file.
+        if (s.uploadStatus != "Too short to save" && s.uploadStatus != "Not saved")
+            Pill("Share ride file", { gregario.shareRide() }, Modifier.fillMaxWidth())
         Pill("Done", { gregario.close() }, Modifier.fillMaxWidth())
     }
 }

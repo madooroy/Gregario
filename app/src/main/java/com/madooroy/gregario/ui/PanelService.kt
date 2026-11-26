@@ -46,7 +46,7 @@ class PanelService : Service() {
         super.onCreate()
         window.open()
         startInForeground()
-        if (!Settings.canDrawOverlays(this)) {
+        if (!canDrawOverlays(this)) {
             Timber.w("Gregario: no permission to draw over other apps")
             stopSelf(); return
         }

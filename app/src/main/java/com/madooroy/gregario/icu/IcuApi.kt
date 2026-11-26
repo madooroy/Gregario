@@ -114,7 +114,7 @@ class IcuApi(
 }
 
 class IcuException(val code: Int, body: String) : Exception(
-    when (code) { 401, 403 -> "intervals.icu refused the API key ($code)"; else -> "intervals.icu error $code: $body" })
+    when (code) { 401, 403 -> "intervals.icu refused the sign-in ($code)"; else -> "intervals.icu error $code: $body" })
 
 /** JSON helpers kept separate so they can be tested on saved responses. */
 object IcuJson {

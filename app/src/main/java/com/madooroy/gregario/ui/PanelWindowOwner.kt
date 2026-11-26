@@ -39,3 +39,7 @@ class PanelWindowOwner : LifecycleOwner, SavedStateRegistryOwner {
         if (registry.currentState != Lifecycle.State.INITIALIZED) registry.currentState = Lifecycle.State.DESTROYED
     }
 }
+
+/** Allowed to draw the panel over other apps? Android 5 (API 21–22) grants it at install and has no such check (review). */
+internal fun canDrawOverlays(context: android.content.Context): Boolean =
+    android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M || android.provider.Settings.canDrawOverlays(context)

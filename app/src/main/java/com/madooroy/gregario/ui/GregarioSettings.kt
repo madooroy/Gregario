@@ -63,6 +63,10 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
             OutlinedButton({ gregario.settings.setPanelScale(PANEL_SIZES[(PANEL_SIZES.indexOf(size).coerceAtLeast(0) + 1) % PANEL_SIZES.size]) }) {
                 Text("Panel size: $size%")
             }
+            val opacity by gregario.settings.panelOpacity.collectAsState()
+            OutlinedButton({ gregario.settings.setPanelOpacity(PANEL_OPACITY[(PANEL_OPACITY.indexOf(opacity).coerceAtLeast(0) + 1) % PANEL_OPACITY.size]) }) {
+                Text("Opacity: $opacity%")
+            }
         }
         // Without intervals.icu: workout files (Open with Gregario) are ridden at this FTP.
         if (saved.isBlank() && token.isBlank()) {
@@ -101,7 +105,7 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
             val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
             Text("1. From strava.com/settings/api (create an application there once): Client ID and Client Secret. " +
                 "2. Copy the link and open it on the laptop, press Authorize. 3. The page that fails to load: copy its " +
-                "address (localhost/…?code=…) and paste it below. With scrcpy, the clipboard is shared both ways.",
+                "address (localhost/…?code=…) and paste it below, or type it if the laptop and tablet do not share a clipboard.",
                 fontSize = 13.sp, color = Color(0xFF9EAEC0))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(id, { id = it }, Modifier.weight(1f), label = { Text("Client ID") }, singleLine = true)
@@ -156,6 +160,7 @@ private fun RidersSection(gregario: Gregario, riders: List<com.madooroy.gregario
 
 /** Panel sizes to cycle through (100% = 280 x 640 px, about an iPhone on the Bike+ screen). */
 private val PANEL_SIZES = listOf(100, 115, 125, 135, 150)
+private val PANEL_OPACITY = listOf(100, 85, 70, 55)
 
 /**
  * Getting workout files onto the tablet without intervals.icu: Android's own file picker (Downloads, a USB stick),
