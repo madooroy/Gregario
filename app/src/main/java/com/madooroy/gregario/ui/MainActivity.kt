@@ -101,6 +101,8 @@ class MainActivity : ComponentActivity() {
                     if (running) OutlinedButton({ PanelService.close(this@MainActivity) }) { Text("Close panel") }
                     else Button({ openPanel() }, enabled = canDraw) { Text("Open panel") }
                     if (running) Button({ goHome() }) { Text("Ride (hide this screen)") }
+                    // No panel open: a plain way out to the tablet's home (Back/Home aren't obvious on every tablet).
+                    else OutlinedButton({ goHome() }) { Text("Close") }
                 }
                 // Open the panel when the tablet starts.
                 val startOnBoot by gregario.settings.startOnBoot.collectAsState()
