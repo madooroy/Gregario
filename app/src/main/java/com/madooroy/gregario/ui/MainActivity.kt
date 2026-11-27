@@ -74,7 +74,8 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 72.dp, bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                 Text("Gregario", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                Text("Structured workouts on Peloton bikes, through Grupetto or a SmartSpin2K · version ${BuildConfig.VERSION_NAME}",
+                Text((if (gregario.pelotonTablet) "Structured workouts on Peloton bikes, through Grupetto or a SmartSpin2K"
+                      else "Structured workouts with a SmartSpin2K") + " · version ${BuildConfig.VERSION_NAME}",
                     fontSize = 13.sp, color = Dim)
                 Spacer(Modifier.height(16.dp))
 
@@ -123,7 +124,8 @@ class MainActivity : ComponentActivity() {
                 color = if (link.startsWith("Connected") || !running) Fg else Note)
             Spacer(Modifier.height(8.dp))
             // Which bike: switched only between workouts (a ride never changes bikes halfway).
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Off a Peloton only the SmartSpin2K works: no choice to show.
+            if (gregario.pelotonTablet) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (k in BikeChoice.Kind.values()) {
                     val pick = { gregario.setBike(choice.copy(kind = k, ss2kHost = address)); Unit }
                     if (k == choice.kind) Button(pick, enabled = !riding) { Text(k.label) }
@@ -146,6 +148,10 @@ class MainActivity : ComponentActivity() {
                     "In Grupetto: switch on DirCon (and Bike+ ERG on a Bike+), and keep Grupetto running. Disconnect Zwift " +
                     "or any other app controlling the bike first. On a Peloton Bike (no motor), Gregario shows each target " +
                     "for you to follow with the knob; for ERG there, add a SmartSpin2K."
+                 else if (!gregario.pelotonTablet) "Gregario talks to the SmartSpin2K over DirCon on the Wi-Fi; SS2K holds the " +
+                    "watts by turning the knob. It is found by itself once it is on and on the same Wi-Fi as this tablet; type its " +
+                    "IP address only if it isn't. The SmartSpin2K needs a power source: pair your power meter (or the bike's " +
+                    "Bluetooth power) in the SmartSpin2K's own web page. Disconnect Zwift or any other app controlling it first."
                  else "Gregario talks to the SmartSpin2K over DirCon on the Wi-Fi; SS2K holds the watts by turning the knob. " +
                     "It is found by itself once it is on and on the same Wi-Fi; type its IP address only if it isn't. " +
                     "Keep Grupetto running with its Bluetooth power broadcast (SS2K reads its power from Grupetto); Gregario " +

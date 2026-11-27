@@ -166,10 +166,19 @@ class Gregario private constructor(private val app: android.app.Application) {
     private var armedUntil = 0L
 
     /**
+     * A Peloton tablet (Grupetto can run here)? Anywhere else only a SmartSpin2K on the Wi-Fi works, so Gregario is set to
+     * it, offers nothing about Grupetto, and finds the SS2K by itself: no setup beyond switching the SS2K on.
+     */
+    val pelotonTablet: Boolean by lazy { com.madooroy.gregario.trainer.Machine.isPeloton(app) }
+
+    /**
      * The bike connection: bike data in, ERG targets out. Grupetto's DirCon on this tablet, or a SmartSpin2K's DirCon
      * over Wi-Fi (main screen › Bike connection). Rebuilt by [setBike], only while no workout is open.
      */
-    private var bikeChoice = settings.bike.value
+    private var bikeChoice = settings.bike.value.let { c ->
+        if (pelotonTablet || c.kind != com.madooroy.gregario.trainer.BikeChoice.Kind.GRUPETTO) c
+        else c.copy(kind = com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K).also { settings.setBike(it) }
+    }
     private var link = newLink(bikeChoice)
 
     private fun newLink(b: com.madooroy.gregario.trainer.BikeChoice) =
@@ -197,7 +206,7 @@ class Gregario private constructor(private val app: android.app.Application) {
     private var reader: DirConLink? = newReader(bikeChoice)
 
     private fun newReader(b: com.madooroy.gregario.trainer.BikeChoice) =
-        if (b.kind != com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K) null
+        if (b.kind != com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K || !pelotonTablet) null
         else DirConLink(host = "127.0.0.1", clock = { SystemClock.elapsedRealtime() }, log = { Timber.tag(LOG_TAG).i("Grupetto reader: $it") },
             name = "Grupetto", lookFor = "switch DirCon on in Grupetto", readOnly = true)
 
@@ -233,6 +242,7 @@ class Gregario private constructor(private val app: android.app.Application) {
     /** The panel's Switch pill: Grupetto ⇄ SmartSpin2K (the SS2K found on the Wi-Fi, else the last address). */
     fun switchBike(): Boolean {
         val c = bikeChoice
+        if (!pelotonTablet) return false
         if (c.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K) return setBike(c.copy(kind = com.madooroy.gregario.trainer.BikeChoice.Kind.GRUPETTO))
         // Nothing to switch to: say so, and stay on Grupetto (review: a Grupetto-only rider was left with no bike).
         if (ss2kFound == null && !com.madooroy.gregario.trainer.BikeChoice.validHost(c.ss2kHost.trim())) {
@@ -260,6 +270,8 @@ class Gregario private constructor(private val app: android.app.Application) {
      */
     fun setBike(b: com.madooroy.gregario.trainer.BikeChoice): Boolean {
         if (!canSwitchBike()) return false
+        // Off a Peloton there is no Grupetto to ride through.
+        if (!pelotonTablet && b.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.GRUPETTO) return false
         // SmartSpin2K chosen without a usable address: take the one found on the Wi-Fi (review: it said "type its
         // address" although one had been found).
         val found = ss2kFound
@@ -611,11 +623,13 @@ class Gregario private constructor(private val app: android.app.Application) {
         // (intervals.icu shows every interval as a lap). FTP tests keep their result lines.
         return listOfNotNull(
             // "a Peloton Bike+" when the tablet says which Peloton it is (Marc: Strava said "a Peloton bike" for his Bike+).
-            (machine?.let { "a $it" } ?: "a Peloton bike").let { bike ->
+            // Off a Peloton the bike is unknown: just "Ridden with a SmartSpin2K."
+            (machine?.let { "on a $it" } ?: if (pelotonTablet) "on a Peloton bike" else null).let { on ->
+                val bike = on?.let { "Ridden $it" } ?: "Ridden"
                 when {
-                    bikeChoice.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K -> "Ridden on $bike with a SmartSpin2K."
-                    s.noErgBike -> "Ridden on $bike, following the targets."
-                    else -> "Ridden on $bike through Grupetto."
+                    bikeChoice.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K -> "$bike with a SmartSpin2K."
+                    s.noErgBike -> "$bike, following the targets."
+                    else -> "$bike through Grupetto."
                 }
             },
             "Total Output: ${t.kj} kJ",
@@ -882,10 +896,10 @@ class Gregario private constructor(private val app: android.app.Application) {
     }
 
     /**
-     * What the card says, checked in order: Grupetto missing (it is always needed: it is the only thing that reads the
-     * Peloton), Grupetto not answering, the SmartSpin2K not answering, an SS2K with no power. Nothing in the first
-     * 10 s after the panel opens or the bike drops (it usually just connects), and nothing mid-ride while the amber
-     * "Lost" border says it already.
+     * What the card says, checked in order: Grupetto missing on a Peloton tablet (the only thing that reads the
+     * Peloton; never asked for elsewhere), Grupetto not answering, the SmartSpin2K not answering, an SS2K with no power.
+     * Nothing in the first 10 s after the panel opens or the bike drops (it usually just connects), and nothing
+     * mid-ride while the amber "Lost" border says it already.
      */
     private fun bikeHelp(lostMidRide: Boolean): BikeHelp? {
         val now = SystemClock.elapsedRealtime()
@@ -897,22 +911,25 @@ class Gregario private constructor(private val app: android.app.Application) {
             // Before a ride only (stopped mid-ride reads 0 too), and only when the power isn't coming from Grupetto itself.
             val beforeRide = session.let { it == null || it.player.state == WorkoutPlayer.State.Ready }
             return if (ss2k && beforeRide && reader?.connected != true && powerSeenAt < linkUpAt && now - linkUpAt > NO_POWER_MS)
-                BikeHelp("SmartSpin2K: no power yet", "Pedal a few strokes. Still 0 W? Check Grupetto is running with Bluetooth on: " +
-                    "the SmartSpin2K gets its power from Grupetto.", openGrupetto = grupettoInstalled(now))
+                if (pelotonTablet) BikeHelp("SmartSpin2K: no power yet", "Pedal a few strokes. Still 0 W? Check Grupetto is running " +
+                    "with Bluetooth on: the SmartSpin2K gets its power from Grupetto.", openGrupetto = grupettoInstalled(now))
+                else BikeHelp("SmartSpin2K: no power yet", "Pedal a few strokes. Still 0 W? The SmartSpin2K needs a power source: " +
+                    "pair your power meter (or the bike's Bluetooth power) in the SmartSpin2K's own web page, " +
+                    "http://${bikeChoice.ss2kHost}.")
             else null
         }
         linkUpAt = 0L
         if (lostMidRide) return null
         val since = maxOf(attachedAt, link.lostAt ?: 0L)
         if (now - since < HINT_GRACE_MS) return null
-        if (!grupettoInstalled(now))
+        if (pelotonTablet && !grupettoInstalled(now))
             return BikeHelp("Gregario needs Grupetto", "Grupetto reads the Peloton and passes it to Gregario. Install it on this " +
                 "tablet (github.com/doudar/grupetto), then switch DirCon on in its settings.")
         return when {
             !ss2k -> BikeHelp("Grupetto isn't answering", "Open Grupetto and switch DirCon on in its settings. Gregario keeps trying " +
                 "and connects by itself.", openGrupetto = true)
-            bikeChoice.host == null -> BikeHelp("SmartSpin2K: no address", "Type its address in Gregario's settings, or switch it on " +
-                "so Gregario finds it on the Wi-Fi.")
+            bikeChoice.host == null -> BikeHelp("Looking for a SmartSpin2K", "Switch it on and put it on this tablet's Wi-Fi " +
+                "(see its setup guide); Gregario finds it by itself. Not found after a minute? Type its IP address in Gregario's settings.")
             else -> BikeHelp("SmartSpin2K isn't answering", "Check it's on and on this Wi-Fi (${bikeChoice.ss2kHost}). Gregario keeps " +
                 "trying and connects by itself.")
         }

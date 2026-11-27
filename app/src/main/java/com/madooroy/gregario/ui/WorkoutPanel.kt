@@ -389,7 +389,8 @@ private fun BikeLine(gregario: Gregario, s: PanelState) {
         Box(Modifier.size(8.dp).background(if (s.bikeLink == null) TraceCad else Accent, CircleShape))
         Text(s.bike.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Fg, maxLines = 1)
         Text(if (ss2k) "· Wi-Fi" else "· this tablet", fontSize = 13.sp, color = Dim, maxLines = 1, modifier = Modifier.weight(1f))
-        Box(Modifier.height(28.dp).background(Card, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
+        // Off a Peloton the SmartSpin2K is the only bike: nothing to switch to.
+        if (gregario.pelotonTablet) Box(Modifier.height(28.dp).background(Card, RoundedCornerShape(14.dp)).border(1.dp, Line, RoundedCornerShape(14.dp))
             .clickable { gregario.switchBike() }.padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
             Text("Switch", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Fg, maxLines = 1)
         }

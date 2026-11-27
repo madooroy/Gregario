@@ -19,6 +19,22 @@ object Machine {
     }
 
     /** On the tablet: read the setting (unreadable is just unknown). */
+    /**
+     * A Peloton tablet, where Grupetto can run: the tablet's peloton_platform setting is there (any Peloton machine), its
+     * brand is Peloton, or Grupetto is installed. Anywhere else (a Samsung, a Fire, the emulator) the only bike is a
+     * SmartSpin2K on the Wi-Fi. The emulator plays a Bike+ with: adb shell settings put global peloton_platform titan
+     */
+    fun isPeloton(platform: String?, brand: String?, grupettoInstalled: Boolean): Boolean =
+        !platform.isNullOrBlank() || brand.equals("Peloton", ignoreCase = true) || grupettoInstalled
+
+    fun isPeloton(context: android.content.Context): Boolean = isPeloton(platform(context), android.os.Build.BRAND,
+        runCatching { context.packageManager.getLaunchIntentForPackage(GRUPETTO) != null }.getOrDefault(false))
+
+    private const val GRUPETTO = "com.spop.poverlay"
+
+    private fun platform(context: android.content.Context): String? =
+        runCatching { android.provider.Settings.Global.getString(context.contentResolver, "peloton_platform") }.getOrNull()
+
     fun of(context: android.content.Context): String? = name(
         runCatching { android.provider.Settings.Global.getString(context.contentResolver, "peloton_platform") }.getOrNull(),
         android.os.Build.BRAND, android.os.Build.MODEL)

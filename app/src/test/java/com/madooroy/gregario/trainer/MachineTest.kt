@@ -20,4 +20,13 @@ class MachineTest {
         assertNull(Machine.name("caesar", "Peloton", "PLTN-TTR01"))   // Row
         assertNull(Machine.name(null, "google", "sdk_gphone64_x86_64")) // the emulator
     }
+
+    @Test fun `a Peloton tablet - the setting, the brand or Grupetto installed`() {
+        org.junit.Assert.assertTrue(Machine.isPeloton("titan", "Peloton", false))
+        org.junit.Assert.assertTrue(Machine.isPeloton(null, "PELOTON", false))
+        org.junit.Assert.assertTrue(Machine.isPeloton("v1", "google", false))           // the emulator playing a Bike
+        org.junit.Assert.assertTrue(Machine.isPeloton(null, "samsung", true))           // Grupetto installed: trust it
+        org.junit.Assert.assertFalse(Machine.isPeloton(null, "samsung", false))
+        org.junit.Assert.assertFalse(Machine.isPeloton(" ", "google", false))
+    }
 }
