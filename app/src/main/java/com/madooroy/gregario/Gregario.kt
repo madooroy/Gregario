@@ -104,8 +104,8 @@ data class PanelState(
     val bikeHelp: BikeHelp? = null,
 )
 
-/** The "No bike found" card: a title, what to do, and Open Grupetto when that is the fix. */
-data class BikeHelp(val title: String, val body: String, val openGrupetto: Boolean = false)
+/** The "No bike found" card: a title, what to do, and Open Grupetto or Type its address when that is the fix. */
+data class BikeHelp(val title: String, val body: String, val openGrupetto: Boolean = false, val typeAddress: Boolean = false)
 
 /**
  * One per app: loads today's workout from intervals.icu and runs it on the bike through Grupetto's DirCon
@@ -929,9 +929,9 @@ class Gregario private constructor(private val app: android.app.Application) {
             !ss2k -> BikeHelp("Grupetto isn't answering", "Open Grupetto and switch DirCon on in its settings. Gregario keeps trying " +
                 "and connects by itself.", openGrupetto = true)
             bikeChoice.host == null -> BikeHelp("Looking for a SmartSpin2K", "Switch it on and put it on this tablet's Wi-Fi " +
-                "(see its setup guide); Gregario finds it by itself. Not found after a minute? Type its IP address in Gregario's settings.")
+                "(see its setup guide); Gregario finds it by itself. Not found after a minute? Type its IP address.", typeAddress = true)
             else -> BikeHelp("SmartSpin2K isn't answering", "Check it's on and on this Wi-Fi (${bikeChoice.ss2kHost}). Gregario keeps " +
-                "trying and connects by itself.")
+                "trying and connects by itself. New address? Type it in.", typeAddress = true)
         }
     }
 

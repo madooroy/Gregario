@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,9 +51,17 @@ import kotlinx.coroutines.delay
  */
 class MainActivity : ComponentActivity() {
     private var canDraw by mutableStateOf(false)
+    /** Opened from the panel's "Type its address": put the cursor in the SmartSpin2K address box, keyboard up. */
+    private var focusAddress by mutableStateOf(false)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_TYPE_ADDRESS, false)) focusAddress = true
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_TYPE_ADDRESS, false)) focusAddress = true
         val gregario = Gregario.get(application)
         setContent {
             MaterialTheme(colors = darkColors(primary = Accent, background = Bg, surface = Bg)) {
@@ -111,11 +120,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     @Composable
     private fun LinkCard(gregario: Gregario, link: String, running: Boolean) {
         val choice by gregario.settings.bike.collectAsState()
         val state by gregario.state.collectAsState()
-        val riding = state.workout != null
+        // A workout on its Ready screen (nothing ridden yet) can still change bikes or address: it is set up again.
+        val riding = state.workout != null && !gregario.canSwitchBike()
+        val addressFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        LaunchedEffect(focusAddress, choice.kind) {
+            if (focusAddress && choice.kind == BikeChoice.Kind.SS2K) {
+                delay(300)   // the box must be laid out first
+                runCatching { addressFocus.requestFocus(); keyboard?.show() }
+                focusAddress = false
+            }
+        }
         val ss2k = choice.kind == BikeChoice.Kind.SS2K
         var address by remember(choice) { mutableStateOf(choice.ss2kHost) }
         Column(Modifier.fillMaxWidth().background(Card, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(14.dp)) {
@@ -136,7 +156,7 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material.OutlinedTextField(address, { address = it.trim().take(64) },
-                        Modifier.widthIn(max = 260.dp), label = { Text("Address (only if not found)") }, singleLine = true,
+                        Modifier.widthIn(max = 260.dp).focusRequester(addressFocus), label = { Text("Address (only if not found)") }, singleLine = true,
                         isError = address.isNotEmpty() && !BikeChoice.validHost(address))
                     OutlinedButton({ gregario.setBike(choice.copy(ss2kHost = address)) },
                         enabled = !riding && BikeChoice.validHost(address) && address != choice.ss2kHost) { Text("Save") }
@@ -180,12 +200,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private companion object {
-        val Bg = Color(0xFF11161D)
-        val Card = Color(0xFF1B2430)
-        val Fg = Color(0xFFE8EEF5)
-        val Dim = Color(0xFF9EAEC0)
-        val Note = Color(0xFFF5C542)
-        val Accent = Color(0xFF4FC3F7)
+
+    companion object {
+        private val Bg = Color(0xFF11161D)
+        private val Card = Color(0xFF1B2430)
+        private val Fg = Color(0xFFE8EEF5)
+        private val Dim = Color(0xFF9EAEC0)
+        private val Note = Color(0xFFF5C542)
+        private val Accent = Color(0xFF4FC3F7)
+        private const val EXTRA_TYPE_ADDRESS = "typeAddress"
+
+        /** Gregario's screen with the cursor in the SmartSpin2K address box (the panel's "Type its address"). */
+        fun typeAddress(context: android.content.Context): Intent = Intent(context, MainActivity::class.java)
+            .putExtra(EXTRA_TYPE_ADDRESS, true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
     }
 }

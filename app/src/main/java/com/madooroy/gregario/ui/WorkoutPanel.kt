@@ -200,6 +200,13 @@ private fun BikeHelpCard(gregario: Gregario, h: com.madooroy.gregario.BikeHelp) 
         Text(h.title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Fg)
         Text(h.body, fontSize = 12.sp, color = AlertFg)
         if (h.openGrupetto) Pill("Open Grupetto", { gregario.openGrupetto() }, Modifier.fillMaxWidth())
+        // Straight to the address box on Gregario's screen, keyboard up (the panel itself can't take typing).
+        if (h.typeAddress) {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            Pill("Type its address", {
+                runCatching { context.startActivity(MainActivity.typeAddress(context)) }
+            }, Modifier.fillMaxWidth())
+        }
     }
 }
 
