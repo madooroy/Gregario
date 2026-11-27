@@ -602,15 +602,21 @@ class Gregario private constructor(private val app: android.app.Application) {
     /** The ride's name on intervals.icu and Strava: the planned workout's own (Marc, Nov 25), else one made from its steps. */
     private fun rideName(s: WorkoutSession): String = planned?.name?.trim()?.takeIf { it.isNotEmpty() } ?: s.player.workout.title()
 
+    /** The Peloton this tablet belongs to ("Peloton Bike+"), or null when the tablet doesn't say. */
+    private val machine: String? by lazy { com.madooroy.gregario.trainer.Machine.of(app) }
+
     private fun description(s: WorkoutSession, rpe: Int?): String {
         val r = s.recorder; val t = r.totals()
         // Just the basics plus total output, no app name, no per-interval lines
         // (intervals.icu shows every interval as a lap). FTP tests keep their result lines.
         return listOfNotNull(
-            when {
-                bikeChoice.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K -> "Ridden on a Peloton bike with a SmartSpin2K."
-                s.noErgBike -> "Ridden on a Peloton bike, following the targets."
-                else -> "Ridden on a Peloton bike through Grupetto."
+            // "a Peloton Bike+" when the tablet says which Peloton it is (Marc: Strava said "a Peloton bike" for his Bike+).
+            (machine?.let { "a $it" } ?: "a Peloton bike").let { bike ->
+                when {
+                    bikeChoice.kind == com.madooroy.gregario.trainer.BikeChoice.Kind.SS2K -> "Ridden on $bike with a SmartSpin2K."
+                    s.noErgBike -> "Ridden on $bike, following the targets."
+                    else -> "Ridden on $bike through Grupetto."
+                }
             },
             "Total Output: ${t.kj} kJ",
             "NP ${t.np} W · IF ${"%.2f".format(Locale.US, t.intensityFactor)} · TSS ${Math.round(t.tss)} at FTP ${r.ftp} W" +
