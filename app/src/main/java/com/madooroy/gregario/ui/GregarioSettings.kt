@@ -55,10 +55,6 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // Drag the panel by its handle to put it anywhere; this button steps through the four corners.
             OutlinedButton({ gregario.settings.setPlacement(com.madooroy.gregario.PanelPlacement.nextCorner(place)) }) { Text("Panel: ${place.label()}") }
-            val lead by gregario.settings.climbLead.collectAsState()
-            OutlinedButton({ gregario.settings.setClimbLead((lead + 1) % 3) }) {
-                Text(when (lead) { 0 -> "Climb lead: off"; 1 -> "Climb lead: 1 s (on \"1\")"; else -> "Climb lead: 2 s" })
-            }
             val size by gregario.settings.panelScale.collectAsState()
             OutlinedButton({ gregario.settings.setPanelScale(PANEL_SIZES[(PANEL_SIZES.indexOf(size).coerceAtLeast(0) + 1) % PANEL_SIZES.size]) }) {
                 Text("Panel size: $size%")
@@ -67,6 +63,12 @@ fun ColumnScope.GregarioSettings(gregario: Gregario) {
             OutlinedButton({ gregario.settings.setPanelOpacity(PANEL_OPACITY[(PANEL_OPACITY.indexOf(opacity).coerceAtLeast(0) + 1) % PANEL_OPACITY.size]) }) {
                 Text("Opacity: $opacity%")
             }
+        }
+        // Its own row: four buttons in one ran off the right edge of a narrower screen (Opacity was hidden).
+        Spacer(Modifier.height(6.dp))
+        val lead by gregario.settings.climbLead.collectAsState()
+        OutlinedButton({ gregario.settings.setClimbLead((lead + 1) % 3) }) {
+            Text(when (lead) { 0 -> "Climb lead: off"; 1 -> "Climb lead: 1 s (on \"1\")"; else -> "Climb lead: 2 s" })
         }
         // Without intervals.icu: workout files (Open with Gregario) are ridden at this FTP.
         if (saved.isBlank() && token.isBlank()) {
