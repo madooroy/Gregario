@@ -96,5 +96,17 @@ class IcuSignInActivity : Activity() {
     @Deprecated("Back steps back through intervals.icu's pages first")
     override fun onBackPressed() { if (web.canGoBack()) web.goBack() else super.onBackPressed() }
 
-    override fun onDestroy() { web.destroy(); super.onDestroy() }
+    /**
+     * The web view's leftovers (page cache, cookies, site storage: some 40 MB) are cleared once the sign-in page closes,
+     * signed in or cancelled. Gregario keeps only the intervals.icu token; the next sign-in asks for the password again.
+     */
+    override fun onDestroy() {
+        runCatching {
+            web.clearCache(true); web.clearHistory(); web.clearFormData()
+            android.webkit.WebStorage.getInstance().deleteAllData()
+            android.webkit.CookieManager.getInstance().apply { removeAllCookies(null); flush() }
+        }.onFailure { Timber.w("Couldn't clear the sign-in page's files: ${it.message}") }
+        web.destroy()
+        super.onDestroy()
+    }
 }
