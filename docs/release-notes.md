@@ -1,3 +1,5 @@
+**New in 0.1.1:** About & updates opens in Gregario (it did nothing on a tablet without a web browser, such as a Peloton): version, update status and Check now.
+
 **Install:** download `Gregario.apk` below and install it on the tablet (OpenPelo, `adb install -r Gregario.apk`, or
 open this page in the tablet's browser). Updating: install the new APK over the old one; your settings stay.
 

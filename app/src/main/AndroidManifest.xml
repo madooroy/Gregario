@@ -16,6 +16,11 @@
     <!-- Android 11+: lets Gregario see whether Grupetto is installed, and open it (the "No bike found" card). -->
     <queries>
         <package android:name="com.spop.poverlay" />
+        <!-- About & updates checks whether this tablet has a browser at all (a Peloton doesn't). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <application

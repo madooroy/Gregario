@@ -240,15 +240,20 @@ class Gregario private constructor(private val app: android.app.Application) {
     val update = kotlinx.coroutines.flow.MutableStateFlow<com.madooroy.gregario.update.UpdateCheck.Release?>(null)
     private var updateCheckedAt = 0L
 
-    /** Asks GitHub at most every 6 hours, when Gregario's screen opens; offline just means no answer. */
-    fun checkForUpdate() {
+    /** Whether the last check reached GitHub: null before the first answer, false when offline or refused. */
+    val updateChecked = kotlinx.coroutines.flow.MutableStateFlow<Boolean?>(null)
+
+    /** Asks GitHub at most every 6 hours, when Gregario's screen opens ([force]: About's Check now); offline just means no answer. */
+    fun checkForUpdate(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - updateCheckedAt < 6 * 3_600_000L) return
+        if (!force && now - updateCheckedAt < 6 * 3_600_000L) return
         updateCheckedAt = now
+        if (force) updateChecked.value = null
         scope.launch {
             val latest = kotlinx.coroutines.withContext(Dispatchers.IO) { com.madooroy.gregario.update.UpdateCheck.fetch() }
-            if (latest == null) { updateCheckedAt = 0L; return@launch }   // try again next time
+            if (latest == null) { updateCheckedAt = 0L; updateChecked.value = false; return@launch }   // try again next time
             update.value = latest.takeIf { com.madooroy.gregario.update.UpdateCheck.newer(BuildConfig.VERSION_NAME, it.version) }
+            updateChecked.value = true
         }
     }
 

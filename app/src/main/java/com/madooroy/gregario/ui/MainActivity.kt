@@ -136,14 +136,16 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(16.dp))
                 // Version and updates, bottom right (as in Grupetto): checked on GitHub when this screen opens.
                 val update by gregario.update.collectAsState()
+                var about by remember { mutableStateOf(false) }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Gregario ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = Dim, modifier = Modifier.weight(1f))
                     val latest = update
-                    if (latest != null) Button({ openPage(latest.url) }) {
+                    if (latest != null) Button({ about = true }) {
                         Text("New version ${latest.version} available" + if (latest.test) " (test build)" else "")
                     }
-                    else TextButton({ openPage(com.madooroy.gregario.update.UpdateCheck.RELEASES) }) { Text("About & updates") }
+                    else TextButton({ about = true }) { Text("About & updates") }
                 }
+                if (about) AboutDialog(gregario) { about = false }
                 Spacer(Modifier.height(24.dp))
             }
         }
@@ -210,6 +212,48 @@ class MainActivity : ComponentActivity() {
 
     private fun openPage(url: String) {
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
+    /** A Peloton tablet has no web browser: links are offered only where something can open them. */
+    private fun canOpenPages(): Boolean =
+        Intent(Intent.ACTION_VIEW, Uri.parse(com.madooroy.gregario.update.UpdateCheck.RELEASES)).resolveActivity(packageManager) != null
+
+    /** About & updates, in Gregario itself (as in Grupetto), so it works on a tablet without a browser. */
+    @Composable
+    private fun AboutDialog(gregario: Gregario, onClose: () -> Unit) {
+        val latest by gregario.update.collectAsState()
+        val checked by gregario.updateChecked.collectAsState()
+        LaunchedEffect(Unit) { gregario.checkForUpdate(force = true) }
+        val browser = remember { canOpenPages() }
+        AlertDialog(
+            onDismissRequest = onClose,
+            title = { Text("About Gregario") },
+            text = {
+                Column {
+                    Text("Version ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE} · ${Build.MODEL}")
+                    Spacer(Modifier.height(12.dp))
+                    val l = latest
+                    Text(when {
+                        l != null -> "New version ${l.version} available" + if (l.test) " (test build)" else ""
+                        checked == true -> "You're up to date"
+                        checked == false -> "Couldn't check for updates: is the tablet online?"
+                        else -> "Checking for updates…"
+                    }, fontWeight = FontWeight.Bold)
+                    if (l != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("To update, install it with OpenPelo from a computer, as you installed Gregario." +
+                            if (browser) "" else " The download is at github.com/madooroy/Gregario/releases.")
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClose) { Text("Close") } },
+            dismissButton = {
+                Row {
+                    TextButton({ gregario.checkForUpdate(force = true) }) { Text("Check now") }
+                    if (browser) TextButton({ openPage(latest?.url ?: com.madooroy.gregario.update.UpdateCheck.RELEASES) }) { Text("View release") }
+                }
+            }
+        )
     }
 
     /**
