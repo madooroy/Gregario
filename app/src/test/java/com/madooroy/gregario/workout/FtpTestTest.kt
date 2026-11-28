@@ -36,6 +36,10 @@ class FtpTestTest {
         assertEquals(FtpTest(null, true), FtpTest.of(Workout("FTP Test Ride", listOf(Step.Steady(600, 55.0), Step.Steady(1200, 95.0)))))
         assertNull(FtpTest.of(Workout("Sweet spot 3x12", listOf(Step.Steady(600, 55.0), Step.Steady(1200, 88.0), Step.Steady(600, 50.0)))))
         assertNull(FtpTest.of(Workout("Zwift FTP Warmup", listOf(Step.Ramp(1200, 30.0, 70.0), Step.Steady(300, 50.0)))))
+        // A long free ride, or a 20-min free ride with nothing before it, is no test.
+        assertNull(FtpTest.of(Workout("Free ride", listOf(Step.Free(3600)))))
+        assertNull(FtpTest.of(Workout("Endurance + free", listOf(Step.Steady(600, 60.0), Step.Free(2400)))))
+        assertNull(FtpTest.of(Workout("Free 20", listOf(Step.Free(1200), Step.Steady(300, 50.0)))))
         // A short ladder of 1-minute steps is not a ramp test.
         assertNull(FtpTest.of(Workout("Ladder", (1..5).map { Step.Steady(60, 80.0 + it * 5) })))
     }

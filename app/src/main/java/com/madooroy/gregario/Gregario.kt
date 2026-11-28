@@ -608,7 +608,11 @@ class Gregario private constructor(private val app: android.app.Application) {
     fun shareRide() {
         val s = session ?: return
         runCatching {
-            val dir = java.io.File(app.cacheDir, "share").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+            // Old shared files go, but not one shared in the last hour: an app may not have read it yet (Codex review).
+            val hourAgo = System.currentTimeMillis() - 3_600_000L
+            val dir = java.io.File(app.cacheDir, "share").apply {
+                mkdirs(); listFiles()?.filter { it.lastModified() < hourAgo }?.forEach { it.delete() }
+            }
             val safe = rideName(s).replace(Regex("[^A-Za-z0-9 ._-]"), "").trim().ifEmpty { "Gregario ride" }.take(60)
             val f = java.io.File(dir, "$safe.fit").apply { writeBytes(s.recorder.fit()) }
             val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.share", f)

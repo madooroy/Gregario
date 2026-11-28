@@ -25,8 +25,11 @@ data class FtpTest(val ramp: IntRange?, val twenty: Boolean) {
             val ramp = longestRamp(w.steps)
             // A ramp test also has "FTP" in its name, but its result is the ramp's, not a 20-minute one.
             // "Zwift FTP Warmup" is only the warm-up for a test, ridden on its own.
+            // Found by its steps: a 20-minute free-ride effort after a warm-up. A longer free ride, or one with nothing
+            // before it, is an ordinary free ride, not a test (Codex review: a 60-min free ride was labelled a test).
+            val twentyEffort = w.steps.withIndex().any { (i, s) -> i > 0 && s is Step.Free && s.seconds in 1200..1260 }
             val twenty = ramp == null && !WARMUP_NAME.containsMatchIn(w.name) && w.totalSeconds >= 1200 &&
-                (w.steps.any { it is Step.Free && it.seconds >= 1200 } || TWENTY_NAME.containsMatchIn(w.name))
+                (twentyEffort || TWENTY_NAME.containsMatchIn(w.name))
             return if (ramp != null || twenty) FtpTest(ramp, twenty) else null
         }
 

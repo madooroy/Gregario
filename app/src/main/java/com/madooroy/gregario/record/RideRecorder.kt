@@ -85,12 +85,23 @@ class RideRecorder(workout: Workout, val ftp: Int) {
         val secs = list.sumOf { it.secs }
         val joules = list.sumOf { it.power * it.secs }
         val avg = if (secs > 0) joules / secs else 0.0
-        // NP: 30-s rolling average of 1-s power, to the 4th power, averaged, 4th root (as WorkoutSession).
-        val roll = ArrayDeque<Int>(); var sum = 0.0; var p4 = 0.0; var n4 = 0
+        // NP: 30-s rolling average of 1-s power, to the 4th power, averaged, 4th root. A sample is normally one
+        // second, but a late tick stands for up to 5 s and a merged one for less: the window counts seconds of
+        // riding, not samples (Codex review), so each sample's work is spread over the seconds it covers.
+        val roll = ArrayDeque<Double>(); var sum = 0.0; var p4 = 0.0; var n4 = 0
+        var binSecs = 0.0; var binJoules = 0.0
         for (s in list) {
-            roll.addLast(s.power); sum += s.power
-            if (roll.size > 30) sum -= roll.removeFirst()
-            if (roll.size == 30) { p4 += (sum / 30).pow(4); n4++ }
+            var left = s.secs
+            while (left > 1e-9) {
+                val take = minOf(left, 1.0 - binSecs)
+                binSecs += take; binJoules += s.power * take; left -= take
+                if (binSecs >= 1.0 - 1e-9) {
+                    roll.addLast(binJoules); sum += binJoules
+                    if (roll.size > 30) sum -= roll.removeFirst()
+                    if (roll.size == 30) { p4 += (sum / 30).pow(4); n4++ }
+                    binSecs = 0.0; binJoules = 0.0
+                }
+            }
         }
         val np = if (n4 > 0) (p4 / n4).pow(0.25) else avg
         val ifac = if (ftp > 0) np / ftp else 0.0

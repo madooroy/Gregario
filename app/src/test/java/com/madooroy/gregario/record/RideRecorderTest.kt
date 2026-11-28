@@ -100,4 +100,20 @@ class RideRecorderTest {
         val iv = r.icuIntervals().map { it["start_index"] to it["end_index"] }
         assertEquals(listOf(0 to 120, 120 to 240, 240 to 300, 300 to 360, 360 to 420, 420 to 480), iv)
     }
+
+    /** NP counts seconds, not samples: a late tick standing for 5 s weighs 5 s in the 30-s window (Codex review). */
+    @Test fun `normalized power counts seconds when a tick is late`() {
+        val w = Workout("NP", listOf(Step.Steady(600, 60.0)))
+        fun np(samples: List<Pair<Double, Float>>): Int {
+            val r = RideRecorder(w, 300); var ms = 1_795_150_000_000L
+            samples.forEach { (secs, watts) -> ms += (secs * 1000).toLong(); r.add(ms, secs, watts, 90f, null, 0) }
+            return r.totals().np
+        }
+        // 60 s at 300 W then 60 s at 100 W, once in 1-s ticks and once with the 300 W part in 5-s ticks.
+        val even = List(60) { 1.0 to 300f } + List(60) { 1.0 to 100f }
+        val late = List(12) { 5.0 to 300f } + List(60) { 1.0 to 100f }
+        assertEquals(np(even), np(late))
+        // Steady power: NP is that power, however the ticks fall.
+        assertEquals(200, np(List(40) { 1.0 to 200f } + List(10) { 3.0 to 200f } + List(20) { 1.0 to 200f }))
+    }
 }
