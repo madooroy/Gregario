@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        Gregario.get(application).checkForUpdate()
         canDraw = canDrawOverlays(this)
     }
 
@@ -132,6 +133,17 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(20.dp))
 
                 GregarioSettings(gregario)
+                Spacer(Modifier.height(16.dp))
+                // Version and updates, bottom right (as in Grupetto): checked on GitHub when this screen opens.
+                val update by gregario.update.collectAsState()
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Gregario ${BuildConfig.VERSION_NAME}", fontSize = 13.sp, color = Dim, modifier = Modifier.weight(1f))
+                    val latest = update
+                    if (latest != null) Button({ openPage(latest.url) }) {
+                        Text("New version ${latest.version} available" + if (latest.test) " (test build)" else "")
+                    }
+                    else TextButton({ openPage(com.madooroy.gregario.update.UpdateCheck.RELEASES) }) { Text("About & updates") }
+                }
                 Spacer(Modifier.height(24.dp))
             }
         }
@@ -194,6 +206,10 @@ class MainActivity : ComponentActivity() {
                     "Keep Grupetto running with its Bluetooth power broadcast (SS2K reads its power from Grupetto); Gregario " +
                     "sends Grupetto nothing in this mode, so a Bike+'s motor never fights the SS2K.", fontSize = 13.sp, color = Dim)
         }
+    }
+
+    private fun openPage(url: String) {
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
     /**

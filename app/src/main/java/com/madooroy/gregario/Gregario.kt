@@ -236,6 +236,22 @@ class Gregario private constructor(private val app: android.app.Application) {
             bikeLink = if (link.connected) null else linkStatus()) }
     }
 
+    /** A newer Gregario on GitHub (Gregario's screen shows "New version available"), or null. */
+    val update = kotlinx.coroutines.flow.MutableStateFlow<com.madooroy.gregario.update.UpdateCheck.Release?>(null)
+    private var updateCheckedAt = 0L
+
+    /** Asks GitHub at most every 6 hours, when Gregario's screen opens; offline just means no answer. */
+    fun checkForUpdate() {
+        val now = System.currentTimeMillis()
+        if (now - updateCheckedAt < 6 * 3_600_000L) return
+        updateCheckedAt = now
+        scope.launch {
+            val latest = kotlinx.coroutines.withContext(Dispatchers.IO) { com.madooroy.gregario.update.UpdateCheck.fetch() }
+            if (latest == null) { updateCheckedAt = 0L; return@launch }   // try again next time
+            update.value = latest.takeIf { com.madooroy.gregario.update.UpdateCheck.newer(BuildConfig.VERSION_NAME, it.version) }
+        }
+    }
+
     /** Something ridden and not yet saved: closing the panel now ends the ride (Gregario's screen asks first). */
     fun rideInProgress(): Boolean = session?.let { it.recorder.size > 0 && !state.value.rideSaved } == true
 

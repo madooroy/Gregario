@@ -12,6 +12,9 @@ Android/data/com.madooroy.gregario/files/ride-logs, until newer rides replace it
 address and QR code on the panel) so a phone or computer on the same network can send it workout files. It only
 accepts workout files, never serves anything from the tablet, and stops when a workout is opened.
 
+**Update check:** when Gregario's screen opens (at most every 6 hours), Gregario asks GitHub for its newest release
+to show "New version available". Nothing about you or your rides is sent; GitHub sees only that a device asked.
+
 **What it sends, and only where you connect it:**
 - **intervals.icu** (when connected): it reads your planned workouts for today and your FTP, and uploads each ride
   (a FIT file) with its name, description, RPE and the workout's steps as intervals.
