@@ -75,7 +75,7 @@ class UploadsTest {
     }
 
     @Test fun `queue stops on permanent errors, skips Strava when not connected, promotes drafts`() {
-        val dir = File("/tmp/gregario-queue-test2").apply { deleteRecursively() }
+        val dir = File(System.getProperty("java.io.tmpdir"), "gregario-queue-test2").apply { deleteRecursively() }
         val q = UploadQueue(dir)
         q.add("a", byteArrayOf(1), "A", "d", null, null)
         val h = Fake().apply { replies = ArrayDeque(listOf(HttpReply(400, "bad file"))) }
@@ -93,7 +93,7 @@ class UploadsTest {
     }
 
     @Test fun `queue uploads intervals_icu first, then Strava, and keeps going after a failure`() {
-        val dir = File("/tmp/gregario-queue-test").apply { deleteRecursively() }
+        val dir = File(System.getProperty("java.io.tmpdir"), "gregario-queue-test").apply { deleteRecursively() }
         val q = UploadQueue(dir)
         q.add("20261119-2150", byteArrayOf(9), "QuickTest", "d", "1", 6)
         val h = Fake().apply { replies = ArrayDeque(listOf(HttpReply(500, "down"))) }
@@ -110,7 +110,7 @@ class UploadsTest {
     }
 
     @Test fun `no intervals_icu key but Strava connected - the ride goes to Strava (review U1)`() {
-        val q = UploadQueue(File("/tmp/gregario-queue-u1").apply { deleteRecursively() })
+        val q = UploadQueue(File(System.getProperty("java.io.tmpdir"), "gregario-queue-u1").apply { deleteRecursively() })
         q.add("a", byteArrayOf(1), "A", "d", "7", null)
         val st = Store().apply { accessToken = "a"; expiresAt = 9_999_999_999 }
         val h = Fake().apply { replies = ArrayDeque(listOf(HttpReply(201, """{"id":5,"activity_id":77}"""))) }
@@ -123,7 +123,7 @@ class UploadsTest {
     }
 
     @Test fun `a refused key waits and goes up once the key is fixed (review U3)`() {
-        val q = UploadQueue(File("/tmp/gregario-queue-u3").apply { deleteRecursively() })
+        val q = UploadQueue(File(System.getProperty("java.io.tmpdir"), "gregario-queue-u3").apply { deleteRecursively() })
         q.add("a", byteArrayOf(1), "A", "d", null, null)
         val h = Fake().apply { replies = ArrayDeque(listOf(HttpReply(401, "nope"))) }
         var r = q.process(IcuUploader("wrong", h), null).single()

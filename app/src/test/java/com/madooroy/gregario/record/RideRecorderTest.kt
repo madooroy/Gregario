@@ -36,7 +36,7 @@ class RideRecorderTest {
         val fit = r.fit()
         assertEquals(".FIT", String(fit, 8, 4))
         assertEquals(0, FitWriter.crc(fit))          // the file's CRC checks out over the whole file
-        File("/tmp/gregario-test-ride.fit").writeBytes(fit)
+        File(System.getProperty("java.io.tmpdir"), "gregario-test-ride.fit").writeBytes(fit)
         assertTrue(fit.size > 180 * 10)
         val sum = r.intervalSummary()
         println(sum); assertTrue(sum.startsWith("Intervals:\n1. "))
