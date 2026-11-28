@@ -19,12 +19,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedButton
 import androidx.compose.material.Surface
 import androidx.compose.material.Switch
 import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.material.darkColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -96,14 +98,27 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(16.dp))
                 }
 
-                // 2. The panel.
+                // 2. The panel. Open: Ride hides this screen; Close panel ends it (asking first mid-ride).
+                // Not open: Open panel, or Close for a plain way out (Back/Home aren't obvious on every tablet).
+                var confirmClose by remember { mutableStateOf(false) }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (running) OutlinedButton({ PanelService.close(this@MainActivity) }) { Text("Close panel") }
-                    else Button({ openPanel() }, enabled = canDraw) { Text("Open panel") }
-                    if (running) Button({ goHome() }) { Text("Ride (hide this screen)") }
-                    // No panel open: a plain way out to the tablet's home (Back/Home aren't obvious on every tablet).
-                    else OutlinedButton({ goHome() }) { Text("Close") }
+                    if (running) {
+                        Button({ goHome() }) { Text("Ride (hide this screen)") }
+                        OutlinedButton({
+                            if (gregario.rideInProgress()) confirmClose = true else PanelService.close(this@MainActivity)
+                        }) { Text("Close panel") }
+                    } else {
+                        Button({ openPanel() }, enabled = canDraw) { Text("Open panel") }
+                        OutlinedButton({ goHome() }) { Text("Close") }
+                    }
                 }
+                if (confirmClose) AlertDialog(
+                    onDismissRequest = { confirmClose = false },
+                    title = { Text("Close the panel?") },
+                    text = { Text("The workout ends and the bike is handed back. A ride of a minute or more is saved, and uploaded if intervals.icu or Strava is connected.") },
+                    confirmButton = { TextButton({ confirmClose = false; PanelService.close(this@MainActivity) }) { Text("Close panel") } },
+                    dismissButton = { TextButton({ confirmClose = false }) { Text("Keep riding") } }
+                )
                 // Open the panel when the tablet starts.
                 val startOnBoot by gregario.settings.startOnBoot.collectAsState()
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

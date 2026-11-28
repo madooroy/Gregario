@@ -236,6 +236,9 @@ class Gregario private constructor(private val app: android.app.Application) {
             bikeLink = if (link.connected) null else linkStatus()) }
     }
 
+    /** Something ridden and not yet saved: closing the panel now ends the ride (Gregario's screen asks first). */
+    fun rideInProgress(): Boolean = session?.let { it.recorder.size > 0 && !state.value.rideSaved } == true
+
     /** Bikes change only between workouts, or on the Ready screen before anything is ridden. */
     fun canSwitchBike(): Boolean = session.let { it == null || (it.player.state == WorkoutPlayer.State.Ready && it.recorder.size == 0) }
 
