@@ -32,7 +32,7 @@ object UpdateCheck {
     fun parse(json: String): Release? = runCatching {
         val list = org.json.JSONArray(json)
         (0 until list.length()).map { list.getJSONObject(it) }.firstOrNull { !it.optBoolean("draft") }?.let {
-            Release(it.getString("tag_name").removePrefix("v"), it.optString("html_url", RELEASES), it.optBoolean("prerelease"))
+            Release(it.getString("tag_name").removePrefix("v").substringBefore('-'), it.optString("html_url", RELEASES), it.optBoolean("prerelease"))
         }
     }.getOrNull()
 
